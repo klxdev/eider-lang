@@ -1,7 +1,10 @@
 //! std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
 
 import core.sys
+import core.os
 import std.bytes
+import std.fd
+import std.time
 
 /// What is at a path, without following a final symlink.
 pub type Kind = | Missing | File | Dir | Link | Other
@@ -40,6 +43,211 @@ fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] use
 
 pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, false) }
 pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, true) }
+
+// ---- what a file is: stat, ranged reads, the file system's space
+
+/// What is at `path`: size, kind (`fd.FILE`, `fd.DIR`, `fd.SYMLINK`, ...), permission bits,
+/// modification time (nanoseconds since the epoch) and the bytes allocated on disk (below `size`
+/// for a sparse file). A final symbolic link is followed; `lstat` describes the link. A missing path
+/// is an error (`kind` is the cheap "is there anything").
+pub fn stat(path: List[u8]) -> Result[fd.Stat, String] uses fs { fd.stat_path(path, true) }
+
+/// `stat` of a final symbolic link itself (its kind is `fd.SYMLINK`, its size the length of its target).
+pub fn lstat(path: List[u8]) -> Result[fd.Stat, String] uses fs { fd.stat_path(path, false) }
+
+/// Up to `max` bytes of the file at `path` from byte `offset`: fewer at the end of the file, empty
+/// at or past it. For serving a `Range` or reading a part of a big file without loading it. It opens
+/// the file, reads (a loop over the 1 MiB a single read gives) and closes it. A negative `offset`
+/// or `max` is an error.
+pub fn read_range(path: List[u8], offset: i64, max: i64) -> Result[List[u8], String] uses io, fs {
+    if offset < 0 || max < 0 { return Err(fail("cannot read", path, -22)) }
+    let f = fd.open(path, fd.READ, 0)?
+    let mut out: List[u8] = List.new()
+    let mut at = offset
+    while (out.len() as i64) < max {
+        let want = max - (out.len() as i64)
+        let chunk = match fd.read_at(f, want, at) {
+            Ok(c) => c
+            Err(e) => {
+                os.fd_release(f)
+                return Err(e)
+            }
+        }
+        if chunk.len() == 0 { break }
+        at += chunk.len() as i64
+        bytes.append(inout out, chunk)
+    }
+    os.fd_release(f)
+    Ok(out)
+}
+
+/// The space of the file system that holds a path (`statvfs`), in bytes and inodes. `available_bytes`
+/// is what a process without privilege can still use, `free_bytes` what the superuser can.
+pub type FsStats = { block_size: i64, total_bytes: i64, free_bytes: i64, available_bytes: i64, total_inodes: i64, free_inodes: i64, available_inodes: i64 }
+
+/// The space of the file system that holds `path` (a file or directory on it).
+pub fn statvfs(path: List[u8]) -> Result[FsStats, String] uses fs {
+    one(path)
+    let n = os.statvfs()
+    if n < 0 { return Err(fail("cannot statvfs", path, n)) }
+    let r = sys.take()
+    let fr = sat(os.le_u64(r, 0))
+    Ok(FsStats(fr, sat_mul(os.le_u64(r, 8), fr), sat_mul(os.le_u64(r, 16), fr), sat_mul(os.le_u64(r, 24), fr), sat(os.le_u64(r, 32)), sat(os.le_u64(r, 40)), sat(os.le_u64(r, 48))))
+}
+
+const I64_MAX: i64 = 9223372036854775807
+
+/// Some file systems report counts with every bit set: clamp to the largest i64 instead of trapping.
+fn sat(v: u64) -> i64 {
+    if v > (I64_MAX as u64) { return I64_MAX }
+    v as i64
+}
+
+fn sat_mul(blocks: u64, unit: i64) -> i64 {
+    let b = sat(blocks)
+    if unit > 0 && b > I64_MAX / unit { return I64_MAX }
+    b * unit
+}
+
+// ---- permissions
+
+/// The largest permission value: `0o7777` (setuid, setgid, sticky and rwx for user, group, other).
+const MODE_MAX: u32 = 4095
+
+fn bad_mode(what: str, path: List[u8]) -> String {
+    let mut m = String.from(what)
+    m.push_str(" ")
+    m.append(sys.to_string(path))
+    m.push_str(": the mode must be 0 to 0o7777")
+    m
+}
+
+/// Set the permission bits of the file at `path` (`chmod(2)`, following a symbolic link) to
+/// `mode`, for instance `0o755` (written as 493). A mode above `0o7777` is an error, not masked.
+/// By path, so it also works on a file that can't be opened for reading.
+pub fn chmod(path: List[u8], mode: u32) -> Result[bool, String] uses fs {
+    if mode > MODE_MAX { return Err(bad_mode("cannot chmod", path)) }
+    one(path)
+    let n = os.chmod(mode as i32)
+    if n < 0 { return Err(fail("cannot chmod", path, n)) }
+    Ok(true)
+}
+
+fn put_mode(path: List[u8], data: List[u8], append: bool, mode: u32) -> Result[bool, String] uses fs {
+    if mode > MODE_MAX { return Err(bad_mode("cannot write", path)) }
+    let mut p: List[List[u8]] = List.new()
+    p.push(path)
+    p.push(data)
+    sys.send_all(p)
+    let n = os.write_file_mode(append, mode as i32)
+    if n < 0 { return Err(fail("cannot write", path, n)) }
+    Ok(true)
+}
+
+/// `write`, but a file that is created gets the permission bits `mode` (before the umask) from
+/// the `open` that creates it, so it is never more permissive than asked, not even briefly:
+/// `fs.write_mode(path, script, 0o755)`, `fs.write_mode(path, key, 0o600)`. A file that exists keeps
+/// its mode (`chmod` changes it). A mode above `0o7777` is an error.
+pub fn write_mode(path: List[u8], data: List[u8], mode: u32) -> Result[bool, String] uses fs { put_mode(path, data, false, mode) }
+
+/// `append`, creating the file with `mode` as `write_mode` does.
+pub fn append_mode(path: List[u8], data: List[u8], mode: u32) -> Result[bool, String] uses fs { put_mode(path, data, true, mode) }
+
+// ---- advisory locks
+
+/// A held advisory lock on a file or directory (`flock(2)`), released when the `Lock` is dropped:
+/// at the end of its scope, on an early `return` or `?`, or when the last holder of a copy goes.
+/// Keep it in a variable (`let held = fs.lock(...)?`; an unnamed value is dropped at once). It
+/// does not survive the process: the kernel releases it when the process ends, even by a trap, which
+/// does not run drops. See `lock`.
+pub type Lock = { fd: i32 }
+
+impl Drop for Lock {
+    fn drop(inout self) {
+        if self.fd >= 0 { os.fd_release(self.fd) }
+    }
+}
+
+fn lock_error(path: List[u8], e: String) -> String {
+    let mut m = String.from("cannot lock ")
+    m.append(sys.to_string(path))
+    m.push_str(": ")
+    m.append(e)
+    m
+}
+
+/// The descriptor a lock is taken on: a directory as it is, else the file, created when missing
+/// (0644 before the umask) and never truncated. Close-on-exec, so a started child doesn't hold it.
+fn lock_fd(path: List[u8]) -> Result[i32, String] uses fs {
+    let flags = if is_dir(path) { fd.READ } else { fd.READ | fd.CREATE }
+    match fd.open(path, flags, 420) {
+        Ok(f) => Ok(f)
+        Err(e) => Err(lock_error(path, e))
+    }
+}
+
+/// Lock `path` (`exclusive`, or shared among readers), waiting for as long as another holder keeps
+/// it. A file that doesn't exist is created empty (never truncated or removed: removing a lock file
+/// races with whoever waits on it). The lock is advisory (it stops others who also lock, not others
+/// who just read or write), belongs to this open file, so two `lock`s of one path conflict even
+/// inside one process (threads and tasks included), and is not inherited by children started with
+/// `std/child`. Over NFS it is as reliable as the file system makes it. It blocks the OS thread: in
+/// a task prefer `lock_until`.
+///
+///     let held = fs.lock(path, true)?     // read, change and write the state files
+///     ...                                  // dropped (released) on every way out of the scope
+pub fn lock(path: List[u8], exclusive: bool) -> Result[Lock, String] uses fs {
+    let f = lock_fd(path)?
+    match fd.lock(f, exclusive, true) {
+        Ok(_) => Ok(Lock(f))
+        Err(e) => {
+            os.fd_release(f)
+            Err(lock_error(path, e))
+        }
+    }
+}
+
+/// `lock` without waiting: None when another holder has `path` in a conflicting mode.
+pub fn try_lock(path: List[u8], exclusive: bool) -> Result[Option[Lock], String] uses fs {
+    let f = lock_fd(path)?
+    match fd.lock(f, exclusive, false) {
+        Ok(got) => {
+            if got { return Ok(Some(Lock(f))) }
+            os.fd_release(f)
+            Ok(None)
+        }
+        Err(e) => {
+            os.fd_release(f)
+            Err(lock_error(path, e))
+        }
+    }
+}
+
+/// `lock`, giving up at `dl`: None when `path` was still held then. `flock` has no timeout, so this
+/// tries without waiting and sleeps between tries (1 ms, doubling to 20 ms); it checks the deadline
+/// after each try, so it may return a little after it. A deadline that has passed tries once.
+pub fn lock_until(path: List[u8], exclusive: bool, dl: time.Deadline) -> Result[Option[Lock], String] uses fs, clock {
+    let f = lock_fd(path)?
+    let mut pause: i64 = 1
+    while true {
+        match fd.lock(f, exclusive, false) {
+            Ok(got) => {
+                if got { return Ok(Some(Lock(f))) }
+            }
+            Err(e) => {
+                os.fd_release(f)
+                return Err(lock_error(path, e))
+            }
+        }
+        if dl.expired() {
+            os.fd_release(f)
+            return Ok(None)
+        }
+        time.sleep_ms(pause)
+        if pause < 20 { pause = pause * 2 }
+    }
+    Ok(None)
+}
 
 pub fn kind(path: List[u8]) -> Kind uses fs {
     one(path)

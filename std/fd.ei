@@ -30,10 +30,13 @@ pub const OTHER: i32 = 3
 pub const SYMLINK: i32 = 4
 pub const FIFO: i32 = 5
 pub const SOCKET: i32 = 6
+pub const CHAR_DEVICE: i32 = 7
+pub const BLOCK_DEVICE: i32 = 8
 
-/// What `stat` reports: size in bytes, kind (FILE, DIR, ...), permission bits, and the
-/// modification time in nanoseconds since the Unix epoch.
-pub type Stat = { size: i64, kind: i32, mode: i32, mtime_ns: i64 }
+/// What `stat` reports: size in bytes, kind (FILE, DIR, ...), permission bits, the
+/// modification time in nanoseconds since the Unix epoch, and the bytes allocated on disk
+/// (less than `size` for a sparse file, more for a file that fills whole blocks).
+pub type Stat = { size: i64, kind: i32, mode: i32, mtime_ns: i64, allocated: i64 }
 
 /// The two ends of a pipe (or of a socket pair: both ends then read and write).
 pub type Pair = { r: i32, w: i32 }
@@ -210,7 +213,7 @@ pub fn truncate(fd: i32, len: i64) -> Result[bool, String] uses fs {
 
 fn take_stat() -> Stat {
     let r = sys.take()
-    Stat(os.le_u64(r, 0) as i64, os.le_u64(r, 8) as i32, os.le_u64(r, 16) as i32, os.le_u64(r, 24) as i64)
+    Stat(os.le_u64(r, 0) as i64, os.le_u64(r, 8) as i32, os.le_u64(r, 16) as i32, os.le_u64(r, 24) as i64, os.le_u64(r, 32) as i64)
 }
 
 pub fn stat(fd: i32) -> Result[Stat, String] uses fs {

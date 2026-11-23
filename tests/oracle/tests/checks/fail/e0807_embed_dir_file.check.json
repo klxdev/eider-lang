@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_dir_file.ei","line":2,"col":30},"message":"`embed_dir(\"e0807_embed_dir_str.ei\")` failed: it is not a directory"}

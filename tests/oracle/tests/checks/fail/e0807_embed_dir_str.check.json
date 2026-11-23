@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_dir_str.ei","line":2,"col":25},"message":"`embed_dir` is the value of a `List[u8]` constant (read it with std/embed)"}

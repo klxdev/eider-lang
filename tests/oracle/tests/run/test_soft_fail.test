@@ -1,0 +1,18 @@
+test passes ... ok
+test defer runs when an assert fails ... FAILED
+    forced failure (tests/run/test_soft_fail.ei:23)
+cleanup ran: failed assert
+test defers run in order and drops too ... FAILED
+    length (tests/run/test_soft_fail.ei:31)
+cleanup ran: second
+cleanup ran: first
+test skipped through its defers ... cleanup ran: skipped
+skipped (no KVM on this machine)
+test skipped from a helper ... skipped (from a helper)
+test an assert in a helper is still a trap ... FAILED
+    asserted in a helper (tests/run/test_soft_fail.ei:14)
+test later tests still run ... ok
+
+7 tests, 3 failed, 2 skipped
+--- stderr
+--- exit 1

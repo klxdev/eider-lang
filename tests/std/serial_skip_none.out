@@ -1,0 +1,9 @@
+name,initrd
+kernel,cmdline
+kernel,initrd,cmdline
+kernel,initrd,mac,cmdline
+a,b
+true
+true
+true
+exit 0

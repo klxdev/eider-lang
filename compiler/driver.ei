@@ -135,8 +135,41 @@ pub fn version() -> List[u8] uses io, fs {
 }
 
 /// The C compiler and the flags every compile uses (core = <root>/core).
-pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io {
-    let mut cc = s("cc")
+/// The triple `eider build --target` builds for, normalized (`x86_64-linux-musl`,
+/// `aarch64-linux-musl`; `-unknown-` accepted), or empty for a target that is not supported.
+pub fn target_triple(t: List[u8]) -> List[u8] {
+    if bytes.eq(t, s("x86_64-linux-musl")) || bytes.eq(t, s("x86_64-unknown-linux-musl")) { return s("x86_64-linux-musl") }
+    if bytes.eq(t, s("aarch64-linux-musl")) || bytes.eq(t, s("aarch64-unknown-linux-musl")) { return s("aarch64-linux-musl") }
+    List.new()
+}
+
+/// The flags a cross build (`tgt` not empty) gives every clang that compiles or links:
+/// the target, a static executable, and `--sysroot=$EIDER_SYSROOT` when set (the musl
+/// headers and libraries of the target: docs/site/tooling/cross.md).
+fn target_flags(inout argv: List[List[u8]], tgt: List[u8]) uses io {
+    if tgt.len() == 0 { return }
+    let mut t = s("--target=")
+    bytes.append(inout t, tgt)
+    argv.push(t)
+    argv.push(s("-static"))
+    // lld links for any target (the host's ld may not know the arch)
+    argv.push(s("-fuse-ld=lld"))
+    argv.push(s("-Wno-unused-command-line-argument"))
+    match env.get(s("EIDER_SYSROOT")) {
+        Some(r) => {
+            if r.len() > 0 {
+                let mut a = s("--sysroot=")
+                bytes.append(inout a, r)
+                argv.push(a)
+            }
+        }
+        None => {}
+    }
+}
+
+pub fn cc_argv(core: List[u8], release: bool, tgt: List[u8]) -> List[List[u8]] uses io {
+    // a cross build needs a clang (--target): $CC, else clang rather than the host's cc
+    let mut cc = if tgt.len() > 0 { s("clang") } else { s("cc") }
     match env.get(s("CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
         None => {}
@@ -153,6 +186,7 @@ pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io {
     argv.push(s("-Wno-unused-parameter"))
     if release { argv.push(s("-O2")) } else { argv.push(s("-O0")) }
     argv.push(s("-pthread"))
+    target_flags(inout argv, tgt)
     extra_flags(inout argv)
     argv.push(s("-I"))
     argv.push(core)
@@ -561,7 +595,7 @@ fn build_lib_with(h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8
     bytes.append(inout afile, s(".a"))
     bytes.append(inout sofile, s(".so"))
     let core = fs.join(root(), s("core"))
-    let mut cc = cc_argv(core, true)
+    let mut cc = cc_argv(core, true, List.new())
     cc.push(s("-fPIC"))
     let tl = tool_of(cc)
     let units = core_units(cc, core, tl)
@@ -690,7 +724,8 @@ pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
 
 /// The target clang builds for (`<clang> -dumpmachine`): llvm_abi's AARCH64 for aarch64 or
 /// arm64, else X86_64 (also without clang: emit-llvm then emits x86-64 IR).
-pub fn target_arch() -> u32 uses io, fs, net {
+pub fn target_arch(tgt: List[u8]) -> u32 uses io, fs, net {
+    if tgt.len() > 0 { return if bytes.starts_with(tgt, s("aarch64")) { 1 } else { 0 } }
     let mut cc = s("clang")
     match env.get(s("EIDER_LLVM_CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
@@ -803,20 +838,26 @@ fn thin_lto(cc: List[u8], dir: List[u8]) -> bool uses io, fs, net {
 /// clang links everything with lld, `--thinlto-jobs` the job count and lld's own cache in
 /// <cache>/lto (pruned by lld: a quarter of EIDER_CACHE_MAX, a week). Otherwise, and at -O0
 /// (also when EIDER_CFLAGS ends with -O0), native objects linked by $CC.
-fn compile_llvm(lnames: List[List[u8]], lls: List[List[u8]], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, jobs: u64, quiet: bool) -> List[u8] uses io, fs, net, clock {
+fn compile_llvm(lnames: List[List[u8]], lls: List[List[u8]], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, jobs: u64, quiet: bool, tgt: List[u8]) -> List[u8] uses io, fs, net, clock {
     let core = fs.join(root(), s("core"))
-    let mut cc = cc_argv(core, release)
+    let mut cc = cc_argv(core, release, tgt)
     if debug { cc.push(s("-g")) }
     if prof { cc.push(s("-DEI_RT_PROFILE")) }
     let cache = cache_dir()
     let lcc = llvm_cc(17)
-    let lto = release && !unoptimized() && thin_lto(lcc, dir)
+    // a cross build links without LTO (a plain clang link, no lld needed)
+    let lto = tgt.len() == 0 && release && !unoptimized() && thin_lto(lcc, dir)
     let ltool = tool_of(lcc_argv(lcc))
     let mut la: List[List[u8]] = List.new()
     la.push(lcc.copy())
     if release { la.push(s("-O2")) } else { la.push(s("-O0")) }
     if debug { la.push(s("-g")) }
     if lto { la.push(s("-flto=thin")) }
+    if tgt.len() > 0 {
+        let mut tf = s("--target=")
+        bytes.append(inout tf, tgt)
+        la.push(tf)
+    }
     match env.get(s("EIDER_CFLAGS")) {
         Some(f) => {
             for x in bytes.split(f, 32) {
@@ -889,7 +930,7 @@ pub fn try_executable(ll: List[u8], file: List[u8]) -> Option[Exe] uses io, fs, 
     names.push(s("prog"))
     let mut lls: List[List[u8]] = List.new()
     lls.push(ll)
-    let path = compile_llvm(names, lls, dir, fs.join(dir, stem(file)), false, List.new(), false, false, 0, true)
+    let path = compile_llvm(names, lls, dir, fs.join(dir, stem(file)), false, List.new(), false, false, 0, true, List.new())
     if path.len() == 0 {
         fs.remove_all(dir)
         return None
@@ -906,14 +947,14 @@ fn lcc_argv(lcc: List[u8]) -> List[List[u8]] {
 }
 
 /// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
-pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool, prof: bool, jobs: u64, release: bool) uses io, fs, net, clock {
+pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool, prof: bool, jobs: u64, release: bool, tgt: List[u8]) uses io, fs, net, clock {
     let mut dest = out.copy()
     if dest.len() == 0 { dest = stem(file) }
     let dir = work_dir()
     if cache_dir().len() == 0 {
-        compile_llvm(lnames, lls, dir, dest, release, libs, debug, prof, jobs, false)
+        compile_llvm(lnames, lls, dir, dest, release, libs, debug, prof, jobs, false, tgt)
     } else {
-        let path = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false)
+        let path = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false, tgt)
         // a new file rather than a rewrite of the old one, which may be running
         fs.remove_all(dest)
         let mut cp: List[List[u8]] = List.new()
@@ -941,7 +982,7 @@ pub type Ran = { code: i32, cov: List[u8] }
 /// counters there at exit) and `Ran.cov` is that file's text.
 pub fn run_llvm_ran(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, args: List[List[u8]], envs: List[List[u8]], jobs: u64, cov: bool) -> Ran uses io, fs, net, clock {
     let dir = work_dir()
-    let exe = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false)
+    let exe = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false, List.new())
     let mut argv: List[List[u8]] = List.new()
     let covfile = fs.join(dir, s("coverage.txt"))
     let mut envs2 = envs.copy()

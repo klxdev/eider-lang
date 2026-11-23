@@ -10,7 +10,7 @@ symbols
   4 param port compiler/tests/ide/named_args.ei:5:23-5:27 full 5:23-5:37 in 2 :: port: i64 = 80
   5 param wait compiler/tests/ide/named_args.ei:5:39-5:43 full 5:39-5:55 in 2 :: wait: i64 = WAIT
   6 fn main compiler/tests/ide/named_args.ei:9:4-9:8 full 9:1-12:2 :: fn main() uses io
-  (95 symbols in <prelude>)
+  (105 symbols in <prelude>)
 refs
   compiler/tests/ide/named_args.ei:5:51-5:55 -> 1 const WAIT
   compiler/tests/ide/named_args.ei:6:5-6:9 -> 4 param port

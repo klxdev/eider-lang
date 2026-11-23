@@ -26,6 +26,13 @@ impl[T] Option[T] {
             None => panic("called `unwrap` on a None value")
         }
     }
+    /// The value, or a trap with `msg`.
+    fn expect(self, msg: str) -> T {
+        match self {
+            Some(v) => v
+            None => panic(msg)
+        }
+    }
     fn map[U](self, f: fn(T) -> U) -> Option[U] {
         match self {
             Some(v) => Some(f(v))
@@ -65,10 +72,19 @@ impl[T, E] Result[T, E] {
             Err(_) => default
         }
     }
+    /// The value; on an Err, a trap that says what the error was: `called `unwrap` on an Err value: <e>`
+    /// (the `: <e>` when the error type has Show, which every `String` error from std does).
     fn unwrap(self) -> T {
         match self {
             Ok(v) => v
-            Err(_) => panic("called `unwrap` on an Err value")
+            Err(e) => __unwrap_failed("called `unwrap` on an Err value", e)
+        }
+    }
+    /// The value; on an Err, a trap with `msg` and then `: <e>` (when the error type has Show).
+    fn expect(self, msg: str) -> T {
+        match self {
+            Ok(v) => v
+            Err(e) => __unwrap_failed(msg, e)
         }
     }
     fn map[U](self, f: fn(T) -> U) -> Result[U, E] {

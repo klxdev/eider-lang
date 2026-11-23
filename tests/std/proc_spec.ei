@@ -1,0 +1,117 @@
+// std/proc run_spec: stdin bytes fed while output is collected (NUL bytes, and 3 MiB each way at once),
+// environment (added, replaced entirely), directory, a program that ignores its input, a deadline during
+// feeding, the error for each failing start, a new session, and run_with unchanged.
+
+import core.sys
+import std.bytes
+import std.io
+import std.proc
+
+fn l(s: str) -> List[u8] { sys.lit(s) }
+
+fn cmd1(a: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l(a))
+    v
+}
+
+fn cmd2(a: str, b: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l(a))
+    v.push(l(b))
+    v
+}
+
+fn sh(script: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l("sh"))
+    v.push(l("-c"))
+    v.push(l(script))
+    v
+}
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi {
+    // stdin to cat; every byte value survives, NUL included
+    let mut all: List[u8] = List.new()
+    for i in 0..256 { all.push(i as u8) }
+    let o = proc.run_spec(cmd1("cat"), proc.captured(), proc.spec().with_stdin(all))?
+    print(o.code)
+    print(o.out == all)
+    print(o.err.len())
+
+    // 3 MiB in, 3 MiB out: the feed and the drain interleave (a pipe holds 64 KiB)
+    let mut big: List[u8] = List.new()
+    for i in 0..3145728 { big.push(((i * 31 + 7) % 256) as u8) }
+    let b = proc.run_spec(cmd1("cat"), proc.limited(20000), proc.spec().with_stdin(big))?
+    print(b.code)
+    print(b.out.len())
+    print(b.out == big)
+
+    // empty input is end of input at once
+    let e = proc.run_spec(cmd1("cat"), proc.captured(), proc.spec().with_stdin(List.new()))?
+    print(e.code)
+    print(e.out.len())
+
+    // no stdin given: it is ours (here /dev/null under the test runner), so cat ends at once
+    let inh = proc.run_spec(cmd1("cat"), proc.limited(5000), proc.spec())?
+    print(inh.code)
+
+    // a program that never reads its input is not an error
+    let mut junk: List[u8] = List.new()
+    for i in 0..2000000 { junk.push(120) }
+    let t = proc.run_spec(cmd1("true"), proc.captured(), proc.spec().with_stdin(junk))?
+    print(t.code)
+    let f = proc.run_spec(sh("exit 3"), proc.captured(), proc.spec().with_stdin(l("x")))?
+    print(f.code)
+
+    // environment: added, and the whole environment
+    let ev = proc.run_spec(sh("echo $EIDER_PROC_A $EIDER_PROC_B"), proc.captured(), proc.spec().with_env(l("EIDER_PROC_A"), l("one")).with_env(l("EIDER_PROC_B"), l("two")))?
+    io.out(ev.out)
+    let only = proc.run_spec(cmd1("env"), proc.captured(), proc.spec().clear_env().with_env(l("ONLY"), l("1")))?
+    io.out(only.out)
+
+    // directory
+    let pw = proc.run_spec(cmd1("pwd"), proc.captured(), proc.spec().with_cwd(l("/")))?
+    io.out(pw.out)
+    match proc.run_spec(cmd1("pwd"), proc.captured(), proc.spec().with_cwd(l("/nonexistent/eider"))) {
+        Ok(x) => print("ran?")
+        Err(m) => print(m)
+    }
+    match proc.run_spec(cmd1("no-such-program-eider"), proc.captured(), proc.spec()) {
+        Ok(x) => print("ran?")
+        Err(m) => print(m)
+    }
+    print(proc.run_spec(List.new(), proc.captured(), proc.spec()).is_err())
+    print(proc.run_spec(cmd1("pwd"), proc.captured(), proc.spec().with_env(l("A=B"), l("c"))).is_err())
+
+    // the deadline covers feeding too: sleep never reads, 200 ms limit
+    let sl = proc.run_spec(cmd2("sleep", "30"), proc.limited(200), proc.spec().with_stdin(l("ignored")))?
+    print(sl.timed_out)
+    print(sl.code)
+
+    // a new session: the program's own session id is its pid
+    let ss = proc.run_spec(cmd2("cat", "/proc/self/stat"), proc.captured(), proc.spec().detached())?
+    let text = ss.out
+    let mut at = text.len()
+    while at > 0 && text[at - 1] != 41 { at -= 1 }
+    let parts = bytes.split(bytes.slice(text, at, text.len()), 32)
+    let mut nums: List[u64] = List.new()
+    for p in parts {
+        if nums.len() < 3 && p.len() > 0 && p[0] >= 48 && p[0] <= 57 { nums.push(bytes.parse_u64(p).unwrap_or(0)) }
+    }
+    print(nums[1] == nums[2])   // its process group is its session: it leads both
+
+    // run_with is as before
+    let w = proc.run_with(sh("echo unchanged; echo err >&2; exit 2"), proc.captured())?
+    print(w.code)
+    io.out(w.out)
+    io.out(w.err)
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(m) => print(m)
+    }
+}

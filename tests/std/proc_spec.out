@@ -1,0 +1,26 @@
+0
+true
+0
+0
+3145728
+true
+0
+0
+0
+0
+3
+one two
+ONLY=1
+/
+cannot run pwd: cannot change directory to /nonexistent/eider: No such file or directory
+cannot run no-such-program-eider: No such file or directory
+true
+true
+true
+-1
+true
+2
+unchanged
+err
+done
+exit 0

@@ -1,8 +1,10 @@
-//! std/proc: run other programs. A child process can do anything, so callers need every
+//! std/proc: run other programs, optionally with input, environment and directory (`run_spec`). A child process can do anything, so callers need every
 //! capability it might use (io, fs, net). (`ffi` stays inside core: docs/compiler.md, "C8.5".)
 
 import core.sys
+import core.os
 import std.bytes
+import std.child
 
 /// What a finished program produced. `out`/`err` are empty for streams that weren't
 /// captured. `timed_out`: the deadline passed and the child was killed; `code` is then -1.
@@ -43,6 +45,59 @@ pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] u
         m.push_str(": ")
         m.append(sys.error_text(n))
         return Err(m)
+    }
+    let timed_out = n == 256
+    let code: i32 = if timed_out { -1 } else { n as i32 }
+    Ok(split(sys.take(), code, timed_out))
+}
+
+/// What `run_spec` adds to `run_with`: input for the program's stdin, environment variables, a working
+/// directory and a new session. Start from `spec()`; each `with_*` returns a changed copy. With no
+/// stdin given the program's stdin is ours, as in `run_with`.
+pub type Spec = { spawn: child.Spawn, stdin: List[u8], has_stdin: bool }
+
+/// Nothing set: `run_spec` then does what `run_with` does.
+pub fn spec() -> Spec { Spec(child.options(), List.new(), false) }
+
+impl Spec {
+    /// The program's standard input: these bytes (any, NUL included), then end of input. They are
+    /// fed while its output is collected, so input and output larger than a pipe do not deadlock.
+    fn with_stdin(self, data: List[u8]) -> Spec { Spec(self.spawn, data, true) }
+    /// One more environment variable (added to ours, replacing the variable of the same name).
+    fn with_env(self, name: List[u8], value: List[u8]) -> Spec { Spec(self.spawn.with_env(name, value), self.stdin, self.has_stdin) }
+    /// The environment is only the `with_env` variables.
+    fn clear_env(self) -> Spec { Spec(self.spawn.clear_env(), self.stdin, self.has_stdin) }
+    /// Run in this directory.
+    fn with_cwd(self, path: List[u8]) -> Spec { Spec(self.spawn.with_cwd(path), self.stdin, self.has_stdin) }
+    /// In a new session (no controlling terminal; a terminal's interrupt does not reach it).
+    fn detached(self) -> Spec { Spec(self.spawn.detached(), self.stdin, self.has_stdin) }
+}
+
+/// `run_with`, with the stdin, environment, directory and session of `sp`. `Err` says which step
+/// failed to start (an unreadable directory, a missing program); once it has started, a program that
+/// ignores its input, or exits before reading it, is not an error: its exit code is the result.
+///
+///     let o = proc.run_spec(argv, proc.captured(), proc.spec().with_stdin(text).with_cwd(dir))?
+pub fn run_spec(argv: List[List[u8]], opts: Options, sp: Spec) -> Result[Output, String] uses io, fs, net {
+    let p = child.plan(argv, sp.spawn)?
+    let mut buf: List[u8] = List.new()
+    for s in p.strings {
+        bytes.append(inout buf, s)
+        buf.push(0)
+    }
+    let mut flags = p.flags
+    if sp.has_stdin {
+        flags += 16
+        bytes.append(inout buf, sp.stdin)
+    }
+    sys.send(buf)
+    let o = if opts.capture_out { 1 } else { 0 }
+    let e = if opts.capture_err { 1 } else { 0 }
+    let n = os.run_ex(o, e, opts.timeout_ms, flags, argv.len() as i32, p.envc)
+    if n < 0 {
+        let r = sys.take()
+        let stage = if r.len() >= 4 { os.le_u32(r, 0) } else { 0 }
+        return Err(child.describe_failure(argv[0], sp.spawn, stage, n))
     }
     let timed_out = n == 256
     let code: i32 = if timed_out { -1 } else { n as i32 }

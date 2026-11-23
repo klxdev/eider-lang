@@ -25,6 +25,7 @@ import std.fs
 import std.task
 import std.time
 import std.stream
+import std.strings
 
 // ---- assertions
 
@@ -97,7 +98,7 @@ pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T {
 /// the summary go to stderr, so stdout holds only what the program itself prints.
 pub type Suite = { name: String, checks: i32, failed: i32 }
 
-pub fn suite(name: str) -> Suite { Suite(String.from(name), 0, 0) }
+pub fn suite[T: strings.Text](name: T) -> Suite { Suite(name.text(), 0, 0) }
 
 impl Suite {
     fn eq[T: Eq + Show](inout self, what: str, got: T, want: T) -> bool uses io {
@@ -430,7 +431,7 @@ impl stream.Writer for PipeWriter {
 /// test fails once, after the last case, so one run shows all that is wrong.
 ///
 ///     testing.table("clamp", cases, |x: i32| -> i32 clamp(x))   // cases: List[(i32, i32)]
-pub fn table[T: Show + Copy, R: Eq + Show + Copy](name: str, cases: List[(T, R)], f: fn(T) -> R) uses io {
+pub fn table[T: Show + Copy, R: Eq + Show + Copy, N: strings.Text](name: N, cases: List[(T, R)], f: fn(T) -> R) uses io {
     let mut failed = 0
     for i in 0..cases.len() {
         let c = cases[i].copy()
@@ -441,7 +442,7 @@ pub fn table[T: Show + Copy, R: Eq + Show + Copy](name: str, cases: List[(T, R)]
         if got == want { continue }
         failed += 1
         let mut m = String.from("FAIL ")
-        m.push_str(name)
+        m.append(name.text())
         m.push_str(" case ")
         m.append(i.to_string())
         m.push_str(" (input ")
@@ -450,7 +451,7 @@ pub fn table[T: Show + Copy, R: Eq + Show + Copy](name: str, cases: List[(T, R)]
         io.errln(difference(m, got, want).bytes())
     }
     if failed > 0 {
-        let mut m = String.from(name)
+        let mut m = name.text()
         m.push_str(": ")
         m.append(failed.to_string())
         m.push_str(" of ")
@@ -479,7 +480,7 @@ pub fn benching() -> bool uses io {
 /// nanoseconds per run measured (0 when it only ran once).
 ///
 ///     test "bench: parse a request" { testing.bench("parse", 10000, || { parse(req) }) }
-pub fn bench(name: str, runs: u64, f: fn()) -> i64 uses io, clock {
+pub fn bench[N: strings.Text](name: N, runs: u64, f: fn()) -> i64 uses io, clock {
     f()
     if !benching() || runs == 0 { return 0 }
     let t0 = time.mono_ns()
@@ -490,7 +491,7 @@ pub fn bench(name: str, runs: u64, f: fn()) -> i64 uses io, clock {
     }
     let per = (time.mono_ns() - t0) / (runs as i64)
     let mut m = String.from("bench ")
-    m.push_str(name)
+    m.append(name.text())
     m.push_str(": ")
     m.append(runs.to_string())
     m.push_str(" runs, ")
@@ -530,7 +531,7 @@ fn next_rand(inout s: u64) -> u64 {
 /// the input to `corpus`.
 ///
 ///     test "fuzz: decode never traps" { testing.fuzz("decode", 1, corpus, |b: List[u8]| { decode(b) }) }
-pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses io {
+pub fn fuzz[N: strings.Text](name: N, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses io {
     let total = fuzz_cases()
     let mut st: u64 = if seed == 0 { 88172645463325252 } else { seed }
     let mut failed = 0
@@ -556,7 +557,7 @@ pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses 
                 failed += 1
                 if failed <= 3 {
                     let mut m = String.from("FAIL ")
-                    m.push_str(name)
+                    m.append(name.text())
                     m.push_str(" case ")
                     m.append(n.to_string())
                     m.push_str(" (seed ")
@@ -572,7 +573,7 @@ pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses 
         n += 1
     }
     if failed > 0 {
-        let mut m = String.from(name)
+        let mut m = name.text()
         m.push_str(": ")
         m.append(failed.to_string())
         m.push_str(" of ")
@@ -587,9 +588,9 @@ pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses 
 
 /// A fresh directory under /tmp for a test's files (a fixture); remove it with
 /// `testing.remove_dir(dir)` (a `defer` right after is the usual way).
-pub fn temp_dir(prefix: str) -> Result[List[u8], String] uses fs, clock {
+pub fn temp_dir[N: strings.Text](prefix: N) -> Result[List[u8], String] uses fs, clock {
     let mut name = "/tmp/".bytes()
-    bytes.append(inout name, prefix.bytes())
+    bytes.append(inout name, prefix.text().bytes())
     name.push(45)
     bytes.append(inout name, bytes.from_u64(time.mono_ns() as u64))
     match fs.mkdir_all(name) {

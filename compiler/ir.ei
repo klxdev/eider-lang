@@ -47,7 +47,7 @@
 //   S_ARRAY   dst := [args [b/c]] : ty     S_REPEAT  dst := [op a; b] : ty
 //   S_TAG     dst := (place a is variant b)
 //   S_PRINT   print op a (of type ty)      S_NOWMS dst := now_ms()
-//   S_PANIC   trap with message op a       S_ASSERT  trap unless op a; b = message string+1
+//   S_PANIC   trap with message op a (c = 1: a fresh String the trap frees)       S_ASSERT  trap unless op a; b = message string+1
 //   S_IF      if op a then block b else block c
 //   S_LOOP    loop { block a }; `continue` runs block b (the step) and loops again
 //   S_BREAK   S_CONTINUE   a = how many enclosing loops it leaves besides the innermost (a
@@ -298,6 +298,17 @@ pub const B_MAP_DETERMINISTIC: u32 = 59
 /// B_TASK_CATCH(f) -> Result[T, String] (`Task.catch(f)`, f: fn() -> T borrowed): runs f; Ok(its
 /// result), or Err(the text of the trap that ended it) (docs/compiler.md, "C8.51")
 pub const B_TASK_CATCH: u32 = 60
+/// B_BYTES_LIT(x) -> List[u8]: a new list holding all the bytes of the string-table entry of the
+/// O_STR operand x, whatever they are (NUL included: the length is the entry's, not a C string's).
+/// The value of a `const X: List[u8] = comptime embed("file")` at each use (docs/compiler.md, "C8.87")
+pub const B_BYTES_LIT: u32 = 61
+/// B_TEST_FAIL(msg: str): the runtime's ei_test_fail (an `assert` in a test's own body failed; the checker
+/// follows it with the test's drops and defers and a return). B_TEST_SKIP(reason: str): ei_test_skip (the
+/// same, for `skip` in the test's own body). B_TEST_SKIP_NOW(reason: str): ei_test_skip_now, `skip` from a
+/// function the test called: it does not return (docs/compiler.md, "C8.94")
+pub const B_TEST_FAIL: u32 = 62
+pub const B_TEST_SKIP: u32 = 63
+pub const B_TEST_SKIP_NOW: u32 = 64
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -362,6 +373,10 @@ pub fn builtin_name(b: u32) -> str {
         58 => "filled"
         59 => "deterministic"
         60 => "catch"
+        61 => "bytes_lit"
+        62 => "test_fail"
+        63 => "test_skip"
+        64 => "test_skip_now"
         _ => "builtin"
     }
 }

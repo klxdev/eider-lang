@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_dir_missing.ei","line":2,"col":30},"message":"`embed_dir(\"no_such_dir\")` failed: no such directory"}

@@ -1,0 +1,55 @@
+// The test runner: an `assert` that fails in a test's own body runs the test's defers (#240); `skip(reason)`
+// ends a test as skipped, also through its defers, and from a helper it leaves like a trap (#241); the
+// tests after a failure or a skip still run.
+
+fn cleanup(what: str) uses io { print("cleanup ran: {what}") }
+
+fn unavailable() -> bool { true }
+
+fn helper_that_skips() uses io {
+    skip("from a helper")
+}
+
+fn helper_that_asserts() {
+    assert 1 == 2, "asserted in a helper"
+}
+
+test "passes" {
+    assert 1 == 1
+}
+
+test "defer runs when an assert fails" {
+    defer cleanup("failed assert")
+    assert 1 == 2, "forced failure"
+    print("not reached")
+}
+
+test "defers run in order and drops too" {
+    let s = String.from("owned")
+    defer cleanup("first")
+    defer cleanup("second")
+    assert s.len() == 99, "length"
+}
+
+test "skipped through its defers" {
+    defer cleanup("skipped")
+    if unavailable() { skip("no KVM on this machine") }
+    assert false, "not reached"
+}
+
+test "skipped from a helper" {
+    helper_that_skips()
+    assert false, "not reached"
+}
+
+test "an assert in a helper is still a trap" {
+    helper_that_asserts()
+}
+
+test "later tests still run" {
+    assert 2 == 2
+}
+
+fn main() uses io {
+    print("main")
+}

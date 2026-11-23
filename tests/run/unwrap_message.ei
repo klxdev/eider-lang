@@ -1,0 +1,39 @@
+// unwrap and expect on an Err include the error (when it has Show); on a None they trap with their own
+// message; an error type that cannot be shown still unwraps (and traps with the message alone).
+// The errors here own no heap memory: a contained trap does not unwind, and this test is leak-checked.
+type Bad = | NotFound(path: str) | Denied
+
+fn find(ok: bool) -> Result[i32, Bad] {
+    if ok { return Ok(7) }
+    Err(NotFound("/etc/missing"))
+}
+
+fn caught(f: fn() -> i32) -> String uses io {
+    match Task.catch(f) {
+        Ok(v) => String.from("ok")
+        Err(m) => m
+    }
+}
+
+fn main() uses io {
+    // values come through
+    let r: Result[i32, str] = Ok(5)
+    print(r.unwrap())
+    print(r.expect("never shown"))
+    let o: Option[i32] = Some(6)
+    print(o.expect("never shown"))
+    print(find(true).unwrap())
+    // the trap says what happened
+    print(caught(|| -> i32 { let r: Result[i32, str] = Err("the real reason")
+        r.unwrap() }))
+    print(caught(|| -> i32 { let r: Result[i32, str] = Err("connection refused")
+        r.expect("cannot reach the VM") }))
+    print(caught(|| -> i32 { find(false).unwrap() }))
+    print(caught(|| -> i32 { let n: Option[i32] = None
+        n.expect("no free address") }))
+    print(caught(|| -> i32 { let n: Option[i32] = None
+        n.unwrap() }))
+    // an error type that cannot be shown (a function) still unwraps, with the message alone
+    print(caught(|| -> i32 { let r: Result[i32, fn() -> i32] = Err(|| -> i32 { 1 })
+        r.unwrap() }))
+}

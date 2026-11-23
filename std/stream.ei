@@ -32,6 +32,7 @@
 import core.sys
 import core.os
 import std.error
+import std.strings
 import std.time
 import std.net
 import std.task
@@ -106,21 +107,21 @@ pub fn kind_of(k: i32) -> Kind {
     }
 }
 
-pub fn error(kind: Kind, message: str) -> Error { Error(kind, String.from(message)) }
+pub fn error[T: strings.Text](kind: Kind, message: T) -> Error { Error(kind, message.text()) }
 
 pub fn error_text(kind: Kind, message: String) -> Error { Error(kind, message) }
 
 /// The error for a negative core status: its kind, and "<what>: <the system's message>".
-pub fn os_error(what: str, status: i64) -> Error {
-    let mut m = String.from(what)
+pub fn os_error[T: strings.Text](what: T, status: i64) -> Error {
+    let mut m = what.text()
     m.push_str(": ")
     m.append(sys.error_text(status))
     Error(kind_of(os.err_kind(status)), m)
 }
 
 /// "<what>: timed out", kind TimedOut.
-pub fn timed_out(what: str) -> Error {
-    let mut m = String.from(what)
+pub fn timed_out[T: strings.Text](what: T) -> Error {
+    let mut m = what.text()
     m.push_str(": timed out")
     Error(TimedOut, m)
 }
@@ -283,7 +284,7 @@ pub fn write_all_by[W: Writer](inout w: W, data: List[u8], dl: time.Deadline) ->
 }
 
 /// The text's bytes, all of them.
-pub fn write_str[W: Writer](inout w: W, s: str) -> Result[(), Error] uses io { write_all(inout w, s.bytes()) }
+pub fn write_str[W: Writer, T: strings.Text](inout w: W, s: T) -> Result[(), Error] uses io { write_all(inout w, s.text().bytes()) }
 
 /// A String's bytes, all of them.
 pub fn write_string[W: Writer](inout w: W, s: String) -> Result[(), Error] uses io { write_all(inout w, s.bytes()) }
@@ -600,7 +601,7 @@ pub type Bytes = { data: List[u8], pos: usize }
 pub fn reader(data: List[u8]) -> Bytes { Bytes(data, 0) }
 
 /// A Reader over the bytes of a text.
-pub fn reader_str(s: str) -> Bytes { Bytes(s.bytes(), 0) }
+pub fn reader_str[T: strings.Text](s: T) -> Bytes { Bytes(s.text().bytes(), 0) }
 
 impl Bytes {
     /// Bytes not read yet.

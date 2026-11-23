@@ -15,6 +15,7 @@ bootstrapping from the seed, still need only a C compiler (see [the bootstrap](c
   not needed.
 - Linux on x86-64 or AArch64: the target is the one clang builds for (`clang -dumpmachine`),
   so a clang for another target (`zig cc -target aarch64-linux-musl`, say) cross-builds.
+  `eiderc build --target x86_64-linux-musl` builds a static executable ([Cross-compiling](cross.md)).
   The C calling convention is System V x86-64 or AAPCS64; WebAssembly modules use wasm32's.
 
 ## Commands

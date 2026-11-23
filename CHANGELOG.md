@@ -7,11 +7,79 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## 0.7.7
 
-A patch of correctness fixes in the checker and the runtime, three of them breaking: a `let` of a scalar now copies
+A patch of correctness fixes in the checker and the runtime, three of them breaking, and the std, tooling and test-runner work for hatchd (the Firecracker manager, the first systems program written in Eider): see "Std, tooling and runner" below. The fixes: a `let` of a scalar now copies
 (#183), a write under a live reference is E0308, and a `sync.Lock` is poisoned by a contained trap instead of
 deadlocking (#211; `Lock.reset` recovers). Disjoint fields of one record can be borrowed together (#219) and scalar
 places are two-phase arguments (#198). eider-analyzer moves to 0.7.4 (a fixture); the other libraries needed no change
 and stay where they are. `eiderc audit-refs` is removed.
+
+### Std, tooling and runner
+
+Additive, except where marked. Things a program might notice: `fd.Stat` has a new last field and the core's stat record is
+40 bytes; the std functions listed under #218 gained a type parameter; `Result` and `Option` have an `expect` method; a call
+`skip(reason)` is the test runner's unless the program has its own `skip`; the E0807 message for a bad `comptime` constant type and
+the E0001 text for a non-expression `{...}` in a literal were reworded (the codes are unchanged).
+
+- **Text arguments take a `str` or a `String` (#218).** A `String` still can't be passed where a `str` is expected (a `str` taken
+  from it could outlive it), and there is no `as_str`; instead the std functions that only read a text argument are generic
+  over `strings.Text`: `stream.error`, `os_error`, `timed_out`, `write_str`, `reader_str`, `serial.error`, `fail`, `expected`,
+  `member`, `testing.suite`, `table`, `bench`, `fuzz`, `temp_dir`. Existing calls with a `str` compile as before (these
+  functions gained a type parameter, so a call that wrote the type arguments out would need the new one). Decision C913.
+- **`unwrap` and `expect` say what the error was (#238).** `r.unwrap()` on an `Err` now traps with `called `unwrap` on an Err
+  value: <the error>` (when the error type has Show: every `String` error from std, every derived record or enum), and
+  `expect(msg)` (new on `Result` and `Option`) with `msg: <the error>`. An error type that cannot be shown still unwraps, with
+  the message alone. docs/compiler.md "C8.93", decision C910.
+- **Tests: failed asserts clean up, `skip(reason)`, `--strict`, `eiderc test <dir>` (#240, #241, #244).** An `assert` that
+  fails directly in a `test` block's body now runs the test's `defer`s and drops before the failure ends the test (in a function
+  the test calls it is still a trap); `skip(reason)` ends a test as skipped, reported and counted apart (`7 tests, 0 failed, 2
+  skipped`) and a failure with `--strict` or `EIDER_TEST_STRICT=1`; `eiderc test` runs a package's tests (it already did, with
+  no file) and now also `eiderc test <dir>`, aggregating skips. A program's own `skip` function or variable is unaffected.
+  Diagnostics: E0401 for an array where a `List` is expected suggests `List[...]` (#225), E0001 for a non-expression `{...}` in
+  a literal names the `{{` / `}}` escape (#234). docs/compiler.md "C8.94", decision C911.
+- **`serial(skip_none)` (#242).** `@[serial(skip_none)] initrd: Option[String]` (also `json`, `toml`) leaves a `None` field out
+  when writing instead of writing a null. docs/compiler.md "C8.95", decision C912.
+- **`proc.run_spec`: stdin, environment, directory (#239).** `proc.run_spec(argv, proc.captured(), proc.spec().with_stdin(bytes)
+  .with_env(n, v).with_cwd(dir))` runs a program with input fed while its output is collected (large input and output do not
+  deadlock; the deadline covers the feeding), an added or replaced environment, a directory and optionally a new session. New
+  core call `ec_run_ex`; `ec_run` and `proc.run_with` behave as before. docs/compiler.md "C8.92", decision C909.
+- **`std/fs`: `stat`, `lstat`, `read_range`, `statvfs`; the allocated size (#212, #233).** `fs.stat(path)` and `fs.lstat(path)` return
+  a `fd.Stat`, which has a new last field `allocated` (bytes on disk: below `size` for a sparse file) and the kinds
+  `fd.CHAR_DEVICE` and `fd.BLOCK_DEVICE`; `fs.read_range(path, offset, max)` reads part of a file; `fs.statvfs(path)` gives the
+  file system's block size, total, free and available bytes and inodes. The core's stat record is 40 bytes now and `ec_statvfs`
+  is new (core/ABI.md). Code that only reads `fd.Stat` fields is unaffected. docs/compiler.md "C8.91", decision C908.
+- **`child.start_with`: files, environment, directory, new session; process groups (#239, #233).** `child.start_with(argv,
+  child.options().with_stdout(child.Append(log)).with_stderr(child.Stdout).with_env(..).with_cwd(..).detached())` starts a
+  program with a stream sent to a file (read, create-and-truncate, append), to a descriptor of ours, or stderr to stdout, with
+  the environment added to or replaced, a working directory and a new session or process group, no shell in between; an
+  `Err` names the step that failed. `child.kill_group`, `wait_group`, `setsid`, `set_group` and `group_of` are the process
+  group calls. New core calls `ec_spawn_ex`, `ec_setsid`, `ec_setpgid`, `ec_getpgid` (core/ABI.md); `ec_spawn` and
+  `child.start` behave as before. docs/compiler.md "C8.90", decision C907.
+- **`std/fs`: advisory locks, `chmod`, and a mode on write (#243).** `fs.lock(path, exclusive)`, `fs.try_lock` and
+  `fs.lock_until(path, exclusive, deadline)` return a `Lock` that is released when it is dropped, so it works with early
+  returns and `?` (a missing lock file is created, a directory can be locked, children do not inherit it). `fs.chmod(path,
+  mode)`, `fs.write_mode(path, data, mode)` and `fs.append_mode` set or create with permission bits in one step (modes above
+  `0o7777` are errors). New C core calls `ec_chmod` and `ec_write_file_mode` (core/ABI.md) and `os.fd_release`; `fs.write` and
+  `fs.append` are unchanged. docs/compiler.md "C8.89", decision C906.
+- **`comptime embed_dir` and std/embed (#229).** `const WEB: List[u8] = comptime embed_dir("web")` embeds every file under a
+  directory (recursively, sorted by path, confined to the package like `embed`; a symbolic link to a directory is an error) as
+  one archive, and the new `std/embed` reads it with no capability and no file system: `embed.get(web, path)`,
+  `embed.paths`, `embed.assets` (`Asset = { path, data }`), `embed.count`. Take the constant once into a `let`: each use is a
+  copy of the archive. docs/compiler.md "C8.88", decision C905.
+- **`comptime embed` of binary files (#160, #102).** `const LOGO: List[u8] = comptime embed("web/logo.png")` is the file's
+  bytes, any content (NUL included); the constant's type picks the form of the one `embed` (`str` still needs valid
+  UTF-8, and says to declare `List[u8]` when it is not). The file is private data in the binary, a use makes a new list
+  of it (one allocation and copy), and a constant of this kind is exempt from E0504 (it owns no heap memory). The path
+  rules and the build-time errors (E0807: missing file, outside the package, a directory, an argument that is not a
+  literal, an initializer that is not the `embed` call) are the text form's. The comptime constants of other types are
+  as before; nothing existing changes. docs/compiler.md "C8.87", decision C904.
+- **`build --target <triple>`: static musl executables (#226).** `eiderc build app.ei --target x86_64-linux-musl`
+  (or `aarch64-linux-musl`) passes the target, `-static` and `-fuse-ld=lld` to the clang that builds the IR and the C
+  runtime (`$CC`, else `clang`) and `--sysroot=$EIDER_SYSROOT` when set. It adds no tool: the build host needs clang,
+  lld and the target's musl headers and static libraries (docs/site/tooling/cross.md). Verified: a program using
+  threads, a TCP connection, a file and a child process builds on x86-64 into an executable with no interpreter and no
+  `NEEDED` entries (`tests/cross`, in `verify.sh`; skipped without `$EIDER_SYSROOT`). aarch64 compiles and links up to
+  the target's compiler-rt builtins, which a plain clang does not have, and has not been run; its tasks are OS threads
+  on musl. Programs importing `core/crypto` still link the host's backend. Nothing changes without `--target`.
 
 The checker's rules for names, borrows and arguments, three of them breaking (fix forward, no shim; the
 repository and the fourteen libraries were migrated).

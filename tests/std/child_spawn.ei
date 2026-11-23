@@ -1,0 +1,192 @@
+// std/child start_with: the console to a file (both streams, in order), append, stdin from a file, an
+// inherited descriptor, environment (added, replacing, cleared), cwd, each failing step's error, a new
+// session and group, kill_group reaching a grandchild, and the legacy `start` unchanged.
+
+import core.sys
+import std.bytes
+import std.child
+import std.fd
+import std.fs
+import std.io
+import std.signal
+import std.time
+
+fn l(s: str) -> List[u8] { sys.lit(s) }
+
+fn argv2(a: str, b: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l(a))
+    v.push(l(b))
+    v
+}
+
+fn argv1(a: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l(a))
+    v
+}
+
+fn sh(script: str) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(l("sh"))
+    v.push(l("-c"))
+    v.push(l(script))
+    v
+}
+
+fn drain(f: i32) -> Result[List[u8], String] uses io, fs {
+    let mut all: List[u8] = List.new()
+    while true {
+        let b = fd.read(f, 4096)?
+        if b.len() == 0 { break }
+        bytes.append(inout all, b)
+    }
+    fd.close(f)?
+    Ok(all)
+}
+
+fn run_to_end(c: child.Child) -> Result[i32, String] uses io, fs, net {
+    Ok(child.wait(c.pid)?.code)
+}
+
+/// The process's own session and group ids from its /proc/self/stat (after "(comm) ": state ppid pgrp session).
+fn ids(text: List[u8]) -> (i64, i64) {
+    let mut at = text.len()
+    while at > 0 && text[at - 1] != 41 { at -= 1 }
+    let rest = bytes.slice(text, at, text.len())
+    let parts = bytes.split(rest, 32)
+    let mut nums: List[i64] = List.new()
+    for p in parts {
+        if nums.len() < 3 && p.len() > 0 && p[0] >= 48 && p[0] <= 57 { nums.push(bytes.parse_u64(p).unwrap_or(0) as i64) }
+    }
+    // nums: ppid, pgrp, session
+    (nums[1], nums[2])
+}
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi, clock {
+    let dir = l("target/tmp/std_child_spawn")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let log = fs.join(dir, l("console.log"))
+
+    // the console of a daemon: stdout and stderr to one file, in order, no shell around the program
+    let o = child.options().with_stdout(child.File(log)).with_stderr(child.Stdout)
+    let c = child.start_with(sh("echo out1; echo err1 >&2; echo out2"), o)?
+    print(run_to_end(c)?)
+    io.out(fs.read(log)?)
+    // appended to, and a File truncates
+    let ap = child.options().with_stdout(child.Append(log))
+    run_to_end(child.start_with(argv2("echo", "more"), ap)?)?
+    print(bytes.find(fs.read(log)?, l("more"), 0).is_some())
+    print(bytes.find(fs.read(log)?, l("out1"), 0).is_some())
+    run_to_end(child.start_with(argv2("echo", "fresh"), o)?)?
+    io.out(fs.read(log)?)
+
+    // stdin from a file, stdout a pipe
+    let inp = fs.join(dir, l("in.txt"))
+    fs.write(inp, l("from a file\n"))?
+    let c2 = child.start_with(argv1("cat"), child.options().with_stdin(child.File(inp)).with_stdout(child.Pipe))?
+    io.out(drain(c2.stdout)?)
+    print(run_to_end(c2)?)
+
+    // a descriptor of ours: the child writes through it, and it is still ours afterwards
+    let f = fd.open(log, fd.WRITE | fd.CREATE | fd.TRUNCATE, 420)?
+    run_to_end(child.start_with(argv2("echo", "via fd"), child.options().with_stdout(child.Fd(f)))?)?
+    fd.write_all(f, l("and ours\n"))?
+    fd.close(f)?
+    io.out(fs.read(log)?)
+
+    // environment: added, replacing ours, and replaced entirely
+    let e = child.options().with_stdout(child.Pipe).with_env(l("EIDER_CHILD_NEW"), l("added")).with_env(l("PATH"), l("/usr/bin:/bin"))
+    let c3 = child.start_with(sh("echo $EIDER_CHILD_NEW; echo $PATH"), e)?
+    io.out(drain(c3.stdout)?)
+    run_to_end(c3)?
+    let only = child.options().with_stdout(child.Pipe).clear_env().with_env(l("ONLY"), l("1"))
+    let c4 = child.start_with(argv1("env"), only)?
+    io.out(drain(c4.stdout)?)
+    print(run_to_end(c4)?)
+
+    // cwd
+    let work = fs.join(dir, l("work"))
+    fs.mkdir_all(work)?
+    let c5 = child.start_with(argv1("pwd"), child.options().with_stdout(child.Pipe).with_cwd(work))?
+    let got = drain(c5.stdout)?
+    run_to_end(c5)?
+    print(bytes.find(got, l("target/tmp/std_child_spawn/work"), 0).is_some())
+
+    // every failing step says which, and leaves no child behind
+    match child.start_with(argv1("pwd"), child.options().with_cwd(l("/nonexistent/eider"))) {
+        Ok(x) => print("started?")
+        Err(m) => print(m)
+    }
+    match child.start_with(argv2("echo", "x"), child.options().with_stdout(child.File(l("/nonexistent/eider/out")))) {
+        Ok(x) => print("started?")
+        Err(m) => print(m)
+    }
+    match child.start_with(argv2("echo", "x"), child.options().with_stderr(child.Append(l("/nonexistent/eider/err")))) {
+        Ok(x) => print("started?")
+        Err(m) => print(m)
+    }
+    match child.start_with(argv2("echo", "x"), child.options().with_stdout(child.Fd(999))) {
+        Ok(x) => print("started?")
+        Err(m) => print(m)
+    }
+    match child.start_with(argv2("no-such-program-eider", "x"), child.options()) {
+        Ok(x) => print("started?")
+        Err(m) => print(m)
+    }
+    // bad options are refused before anything runs
+    print(child.start_with(argv2("echo", "x"), child.options().with_stdin(child.Append(l("x")))).is_err())
+    print(child.start_with(argv2("echo", "x"), child.options().with_stdout(child.Stdout)).is_err())
+    print(child.start_with(argv2("echo", "x"), child.options().with_env(l("A=B"), l("c"))).is_err())
+    print(child.start_with(argv2("echo", "x"), child.options().with_env(l(""), l("c"))).is_err())
+    print(child.start_with(argv2("echo", "x"), child.options().with_cwd(l(""))).is_err())
+
+    // a new session (the child leads it) and a new group (its own, in our session)
+    let mine = child.group_of(0)?
+    let c6 = child.start_with(argv2("cat", "/proc/self/stat"), child.options().with_stdout(child.Pipe).detached())?
+    let s6 = ids(drain(c6.stdout)?)
+    run_to_end(c6)?
+    print(s6.0 == (c6.pid as i64) && s6.1 == (c6.pid as i64))
+    let c7 = child.start_with(argv2("cat", "/proc/self/stat"), child.options().with_stdout(child.Pipe).with_group())?
+    let s7 = ids(drain(c7.stdout)?)
+    run_to_end(c7)?
+    print(s7.0 == (c7.pid as i64) && s7.1 != (c7.pid as i64))
+    print(child.group_of(0)? == mine)
+
+    // kill_group reaches what the child started; wait_group names who ended
+    let g = child.start_with(sh("sleep 30 & echo $!; wait"), child.options().with_stdout(child.Pipe).with_group())?
+    let line = fd.read(g.stdout, 64)?
+    let grand = bytes.parse_u64(bytes.slice(line, 0, line.len() - 1)).unwrap_or(0) as i32
+    print(grand > 0)
+    print(child.kill(grand, 0).is_ok())
+    child.kill_group(g.pid, signal.TERM)?
+    let ended = child.wait_group(g.pid)?
+    print(ended.pid == g.pid)
+    print(ended.exit.signal)
+    fd.close(g.stdout)?
+    // the grandchild is gone too (reparented, so it is reaped by init: poll briefly)
+    let mut gone = false
+    for i in 0..50 {
+        if !gone {
+            if child.kill(grand, 0).is_err() { gone = true } else { time.sleep_ms(20) }
+        }
+    }
+    print(gone)
+    print(child.kill_group(1, signal.TERM).is_err())
+    print(child.wait_group(0).is_err())
+
+    // the legacy start is unchanged
+    let old = child.start(sh("echo legacy"), child.INHERIT, child.PIPE, child.NULL)?
+    io.out(drain(old.stdout)?)
+    run_to_end(old)?
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi, clock {
+    match run() {
+        Ok(_) => print("done")
+        Err(m) => print(m)
+    }
+}

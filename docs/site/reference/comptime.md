@@ -40,9 +40,10 @@ true
 
 ## Types
 
-The constant's type must be an integer type, `bool` or `str`; anything else (`String`, a
-tuple, a record) is E0807 ("`comptime` constants must be integers, bool or str"), reported
-at the constant's name. The expression itself may use any part of the language that needs
+The constant's type must be an integer type, `bool` or `str`, or `List[u8]` when the
+initializer is `embed("file")` (see [Embedding a file](#embedding-a-file)); anything else
+(`String`, a tuple, a record) is E0807 ("`comptime` constants must be integers, bool, str, or a
+`List[u8]` that is `embed("file")`"), reported at the constant's name. The expression itself may use any part of the language that needs
 no capability: owned data, records, enums, generics, closures, `match`, `Map`, `Ref`,
 functions of imported modules. Negative results are fine.
 
@@ -86,8 +87,56 @@ const QUERY_LINES: usize = comptime count_lines(embed("sql/users.sql"))
   is not valid UTF-8, and an argument that is not a literal.
 - The text is part of the compiled program, so changing the file changes what is built and
   invalidates the build cache for the units that use it. There is no run-time file access.
-- Binary data (`List[u8]`) is not embeddable yet: a `comptime` constant is an integer, a
-  `bool` or a `str`.
+
+### Binary data
+
+Declare the constant as `List[u8]` to embed a file of any content (an image, a font, a
+database, a compiled page): the type picks the form, and the UTF-8 rule above applies only to
+`str`.
+
+```eider,ignore
+import std.bytes
+
+const LOGO: List[u8] = comptime embed("web/logo.png")
+
+fn add_logo(inout body: List[u8]) {
+    bytes.append(inout body, LOGO)    // each use is the file's bytes as a new list
+}
+```
+
+- The initializer must be exactly `embed("path")`: nothing else about a `List[u8]` is
+  computed at compile time (E0807 otherwise).
+- The bytes are in the program's read-only data. A use makes a new list of them (one
+  allocation and copy of the file's size), which the program owns: changing it, pushing to it
+  or passing it on never changes the constant or the next use. A constant of this kind owns
+  no heap memory, so E0504 does not apply to it. Read it once into a `let` when it is used
+  many times.
+- Everything else is the same as for text: the path rules, the failures at build time, the
+  build cache.
+
+### A directory
+
+`embed_dir("dir")` embeds every file under a directory, for a static site or a set of
+migrations. The constant is a `List[u8]`: an archive that `std/embed` reads.
+
+```eider,ignore
+import std.embed
+
+const WEB: List[u8] = comptime embed_dir("web")
+
+fn page(path: List[u8]) -> Option[List[u8]] {
+    embed.get(WEB, path)        // a copy of the whole archive: take it once into a `let` for many lookups
+}
+```
+
+- The files are the regular files under the directory, recursively, in byte order of their
+  paths (relative to the directory, with `/`), so the archive does not depend on the order the
+  file system lists them.
+- The directory and every file must be inside the package (checked before anything is read). A
+  symbolic link to a file is that file; one to a directory, another kind of file, a missing or
+  empty directory and a type other than `List[u8]` are E0807.
+- `embed.get(archive, path)` is the file's bytes or `None`; `embed.paths` and `embed.assets`
+  list them. Reading takes no capability and no file system.
 
 ## How a constant is evaluated
 

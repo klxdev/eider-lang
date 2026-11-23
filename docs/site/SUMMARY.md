@@ -68,6 +68,7 @@
 - [The profiler: eider-profiler](tooling/profiler.md)
 - [Versions and releases](tooling/releases.md)
 - [The LLVM backend (experimental)](tooling/llvm.md)
+- [Cross-compiling: static executables](tooling/cross.md)
 
 ## Design notes
 

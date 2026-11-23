@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn blob() -> List[u8] { List.new() }
+const X: List[u8] = comptime blob()
+fn main() uses io { print(X.len()) }

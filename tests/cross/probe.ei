@@ -1,0 +1,45 @@
+// Acceptance probe for `eider build --target`: std net, fs, child and threads in one program.
+import core.sys
+import std.bytes
+import std.child
+import std.fd
+import std.fs
+import std.io
+import std.net
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi, threads {
+    // threads + net: a task connects to a loopback listener and sends a line
+    let l = net.listener(net.ipv4(127, 0, 0, 1, 0), false)?
+    let port = net.local_addr(l)?.port
+    let t = spawn(|| -> bool {
+        let s = net.socket(net.IPV4, net.STREAM, false).unwrap()
+        net.connect(s, net.ipv4(127, 0, 0, 1, port)).unwrap()
+        net.send_all(s, sys.lit("hello over tcp")).unwrap()
+        fd.close(s).unwrap()
+        true
+    })
+    let c = net.accept(l, false)?.unwrap()
+    let got = net.recv(c.fd, 64)?
+    t.join()
+    io.out(got)
+    io.out(sys.lit("\n"))
+    // fs
+    let path = sys.lit("/tmp/eider-cross-probe.txt")
+    fs.write(path, sys.lit("file ok\n"))?
+    io.out(fs.read(path)?)
+    fs.remove_all(path)
+    // child
+    let mut a: List[List[u8]] = List.new()
+    a.push(sys.lit("echo"))
+    a.push(sys.lit("child ok"))
+    let ch = child.start(a, child.INHERIT, child.INHERIT, child.INHERIT)?
+    let e = child.wait(ch.pid)?
+    Ok(e.code == 0)
+}
+
+fn main() uses io, fs, net, ffi, threads {
+    match run() {
+        Ok(ok) => print(ok)
+        Err(m) => print(m)
+    }
+}

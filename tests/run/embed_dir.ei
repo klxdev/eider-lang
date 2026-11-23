@@ -1,0 +1,55 @@
+// comptime embed_dir: a directory tree packed into a `List[u8]` constant; std/embed finds and lists its files
+import core.sys
+import std.bytes
+import std.embed
+import std.io
+
+const SITE: List[u8] = comptime embed_dir("embed/site")
+
+fn p(x: str) -> List[u8] { sys.lit(x) }
+
+fn show(label: str, data: Option[List[u8]]) uses io, ffi {
+    match data {
+        Some(d) => {
+            print(label)
+            print(d.len())
+        }
+        None => { print(label); print("missing") }
+    }
+}
+
+fn main() uses io, ffi {
+    let web = SITE
+    match embed.assets(web) {
+        Ok(all) => {
+            print(all.len())
+            for a in all {
+                io.out(a.path)
+                print(a.data.len())
+            }
+        }
+        Err(m) => print(m)
+    }
+    show("index", embed.get(web, p("index.html")))
+    show("css", embed.get(web, p("css/app.css")))
+    show("nested empty", embed.get(web, p("a/empty.txt")))
+    show("nope", embed.get(web, p("nope.txt")))
+    // a binary file keeps every byte
+    match embed.get(web, p("img/pixel.bin")) {
+        Some(d) => print(d.len() == 6 && d[0] == 0 && d[1] == 255 && d[5] == 254)
+        None => print(false)
+    }
+    // the text of a file is as on disk
+    match embed.get(web, p("index.html")) {
+        Some(d) => io.out(d)
+        None => {}
+    }
+    // not an archive: an error or None, never a trap
+    let junk = p("not an archive")
+    print(embed.assets(junk).is_err())
+    print(embed.get(junk, p("x")).is_none())
+    let mut cut = web.copy()
+    let n = cut.len()
+    cut = bytes.slice(cut, 0, n - 3)
+    print(embed.assets(cut).is_err())
+}

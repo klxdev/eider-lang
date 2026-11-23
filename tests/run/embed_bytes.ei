@@ -1,0 +1,45 @@
+// comptime embed of binary data: `const X: List[u8] = comptime embed("file")` is the file's bytes
+// (every byte value, NUL included), a new list at each use, usable from tasks
+import std.bytes
+
+const BLOB: List[u8] = comptime embed("embed/blob.bin")
+const TEXT: List[u8] = comptime embed("embed/q.sql")
+const AS_STR: str = comptime embed("embed/q.sql")
+
+fn sum(b: List[u8]) -> u64 {
+    let mut t: u64 = 0
+    for x in b { t += x as u64 }
+    t
+}
+
+fn main() uses io, threads {
+    print(BLOB.len())
+    let mut ok = true
+    for i in 0..256 {
+        let at = i as usize
+        if BLOB[at] != (i as u8) || BLOB[511 - at] != (i as u8) { ok = false }
+    }
+    print(ok)
+    print(sum(BLOB))
+    // the text file's bytes are the str's bytes
+    print(TEXT.len() == AS_STR.len())
+    print(bytes.eq(TEXT, AS_STR.bytes()))
+    // a change to one use is not seen by the next
+    let mut m = BLOB
+    m.push(1)
+    m[0] = 99
+    print(m.len())
+    print(BLOB.len())
+    print(BLOB[0])
+    // used from tasks
+    let mut ts: List[Task[u64]] = List.new()
+    for k in 0..4 {
+        ts.push(spawn(|| -> u64 { sum(BLOB) }))
+    }
+    let mut all = true
+    for t in ts { if t.join() != 65280 { all = false } }
+    print(all)
+    // passing it on is a move or a share, never a change of the constant
+    let c = BLOB
+    print(c.len() == BLOB.len())
+}

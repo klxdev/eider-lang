@@ -1985,8 +1985,8 @@ Fix: pass integers, `bool`, a `String` or a `List[u8]` across the boundary.
 
 ## E0807
 
-A **failed `comptime` evaluation**: the type of a `comptime` constant isn't an integer type
-or `bool`, the evaluation uses a floating-point value (comptime does not run floats), the
+A **failed `comptime` evaluation**: the type of a `comptime` constant isn't an integer type,
+`bool`, `str` or (for `embed("file")` alone) `List[u8]`, the evaluation uses a floating-point value (comptime does not run floats), the
 evaluation traps (`comptime evaluation of `X` failed: <the trap>`), or it
 prints more than one line. See [Compile-time evaluation](comptime.md).
 

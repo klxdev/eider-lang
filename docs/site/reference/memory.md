@@ -752,7 +752,9 @@ early a
 A trap does not unwind: no drops run, no `defer` runs, and the process ends
 ([runtime](runtime.md#traps)). A [`defer`](statements.md#defer-and-errdefer) runs with the
 drops of its block, before the values declared ahead of it are dropped.
-In test mode a failed test's values leak and a lock it held stays held.
+In test mode a failed test's values leak and a lock it held stays held, except for one case: an `assert`
+written directly in a `test` block's own body (not in a function it calls, and not in a closure) reports
+the failure and then returns, so the test's `defer`s and drops run and the next test starts clean.
 
 > **Note:** planned and not implemented: std accessors that
 > return references ("projections", 8.15), and lints for silent copies at escapes and for

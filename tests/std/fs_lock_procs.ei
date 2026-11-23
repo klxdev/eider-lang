@@ -1,0 +1,56 @@
+// std/fs locks between processes: four copies of this program each add 1 to one counter file 50
+// times, a read-modify-write that loses updates without the lock (two processes read the same
+// value) and must end at exactly 200 with it. The parent starts the children with its own path.
+
+import core.sys
+import std.bytes
+import std.child
+import std.env
+import std.fs
+import std.io
+
+fn work(counter: List[u8], lockfile: List[u8]) uses io, fs {
+    for i in 0..50 {
+        let held = fs.lock(lockfile, true).unwrap()
+        let n = bytes.parse_u64(fs.read(counter).unwrap()).unwrap()
+        fs.write(counter, bytes.from_u64(n + 1)).unwrap()
+    }
+}
+
+fn parent(me: List[u8]) -> Result[bool, String] uses io, fs, net, ffi {
+    let dir = sys.lit("target/tmp/std_fs_lock_procs")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let counter = fs.join(dir, sys.lit("counter"))
+    let lockfile = fs.join(dir, sys.lit("counter.lock"))
+    fs.write(counter, sys.lit("0"))?
+    let mut kids: List[child.Child] = List.new()
+    for i in 0..4 {
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(me)
+        argv.push(sys.lit("work"))
+        argv.push(counter)
+        argv.push(lockfile)
+        kids.push(child.start(argv, child.NULL, child.NULL, child.INHERIT)?)
+    }
+    for k in kids {
+        let e = child.wait(k.pid)?
+        if e.code != 0 { return Err(String.from("a child failed")) }
+    }
+    io.out(fs.read(counter)?)
+    io.out(sys.lit("\n"))
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi {
+    let a = env.args()
+    if a.len() == 4 {
+        work(a[2], a[3])
+        return
+    }
+    match parent(a[0]) {
+        Ok(_) => print("done")
+        Err(m) => print(m)
+    }
+}

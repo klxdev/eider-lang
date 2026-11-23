@@ -1,0 +1,36 @@
+// #218: functions that only read their text argument take a `str` or a `String` (strings.Text), so text
+// built at run time (an interpolated literal, a String field) can be passed without a conversion
+import std.bytes
+import std.io
+import std.serial
+import std.stream
+import std.testing
+
+fn main() uses io, fs, clock {
+    let k = 3
+    let msg = "case {k}"                      // an interpolated literal is a String
+    // std/stream: errors, write_str, reader_str
+    print(stream.error(stream.Other, msg).message)
+    print(stream.error(stream.Other, "a literal").message)   // str still works
+    print(stream.timed_out(msg).message)
+    print(stream.os_error(msg, -2).message)
+    let r = stream.reader_str(msg)
+    print(r.data.len())
+    // std/serial: errors and member lookup
+    let e = serial.error(msg)
+    io.outln(e.msg)
+    print(serial.error("lit").msg.len())
+    let v = serial.VMap(List.new())
+    print(serial.member(v, msg).is_none())
+    // std/testing: names of suites and tables, a prefix for a temp dir
+    let s = testing.suite(msg)
+    print(s.name)
+    testing.table(msg, List[(1, 2)], |x: i32| -> i32 { x + 1 })
+    match testing.temp_dir(msg) {
+        Ok(d) => {
+            print(bytes.starts_with(d, "/tmp/case 3-".bytes()))
+            testing.remove_dir(d)
+        }
+        Err(m) => print(m)
+    }
+}

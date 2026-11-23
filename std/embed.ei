@@ -1,0 +1,100 @@
+//! std/embed: the files that `comptime embed_dir("dir")` packs into a `List[u8]` constant
+//! (docs/compiler.md, "C8.88"). `const WEB: List[u8] = comptime embed_dir("web")` is every file
+//! under `web/` in one archive inside the program; this module finds and lists them, with no file
+//! system access. Take the constant once (`let web = WEB`: each use of it is a copy) and look files
+//! up in that.
+//!
+//! The archive: `"EMB1"`, a u32 count, then for each file, in byte order of the paths, a u32 path
+//! length, the path (relative to the directory, `/` separated), a u64 data length and the data;
+//! little endian. Reading one is bounds-checked: bytes that are not an archive are an error, never
+//! a trap.
+
+import std.bytes
+import std.encoding
+
+/// One embedded file: its path relative to the embedded directory (`css/app.css`) and its bytes.
+pub type Asset = { path: List[u8], data: List[u8] }
+
+/// Where one file is in the archive.
+type Entry = { path_at: usize, path_len: usize, data_at: usize, data_len: usize, next: usize }
+
+const HEADER: usize = 8
+
+fn magic_ok(a: List[u8]) -> bool {
+    a.len() >= 8 && a[0] == 69 && a[1] == 77 && a[2] == 66 && a[3] == 49
+}
+
+/// The number of files, or None if `archive` does not start like one.
+pub fn count(archive: List[u8]) -> Option[usize] {
+    if !magic_ok(archive) { return None }
+    let n = encoding.u32_le(archive, 4)?
+    Some(n as usize)
+}
+
+/// The entry at offset `at`, or None if it does not fit in the archive.
+fn entry_at(a: List[u8], at: usize) -> Option[Entry] {
+    let pl = encoding.u32_le(a, at)? as usize
+    let path_at = at + 4
+    if pl > a.len() || path_at > a.len() - pl { return None }
+    let dl_at = path_at + pl
+    let dl = encoding.u64_le(a, dl_at)?
+    let data_at = dl_at + 8
+    if dl > ((a.len() - data_at) as u64) { return None }
+    let data_len = dl as usize
+    Some(Entry(path_at, pl, data_at, data_len, data_at + data_len))
+}
+
+/// Every file, in path order. Err if `archive` is not an archive made by `embed_dir`.
+pub fn assets(archive: List[u8]) -> Result[List[Asset], String] {
+    let n = match count(archive) {
+        Some(x) => x
+        None => { return Err(String.from("embed: not an embedded directory (bad header)")) }
+    }
+    let mut out: List[Asset] = List.new()
+    let mut at = HEADER
+    for i in 0..n {
+        match entry_at(archive, at) {
+            Some(e) => {
+                out.push(Asset(bytes.slice(archive, e.path_at, e.path_at + e.path_len), bytes.slice(archive, e.data_at, e.data_at + e.data_len)))
+                at = e.next
+            }
+            None => { return Err(String.from("embed: the archive is cut short or damaged")) }
+        }
+    }
+    Ok(out)
+}
+
+/// The paths, in order (no data is copied).
+pub fn paths(archive: List[u8]) -> Result[List[List[u8]], String] {
+    let n = match count(archive) {
+        Some(x) => x
+        None => { return Err(String.from("embed: not an embedded directory (bad header)")) }
+    }
+    let mut out: List[List[u8]] = List.new()
+    let mut at = HEADER
+    for i in 0..n {
+        match entry_at(archive, at) {
+            Some(e) => {
+                out.push(bytes.slice(archive, e.path_at, e.path_at + e.path_len))
+                at = e.next
+            }
+            None => { return Err(String.from("embed: the archive is cut short or damaged")) }
+        }
+    }
+    Ok(out)
+}
+
+/// The bytes of the file at `path` (relative to the embedded directory), or None: no such file, or
+/// `archive` is not an archive. Only that file is copied.
+pub fn get(archive: List[u8], path: List[u8]) -> Option[List[u8]] {
+    let n = count(archive)?
+    let mut at = HEADER
+    for i in 0..n {
+        let e = entry_at(archive, at)?
+        if e.path_len == path.len() && bytes.eq(bytes.slice(archive, e.path_at, e.path_at + e.path_len), path) {
+            return Some(bytes.slice(archive, e.data_at, e.data_at + e.data_len))
+        }
+        at = e.next
+    }
+    None
+}

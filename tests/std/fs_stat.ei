@@ -1,0 +1,101 @@
+// std/fs: stat and lstat (file, directory, symlink with and without following, missing), the allocated
+// size of a sparse file against a written one, read_range (start, middle, across the end, past it,
+// over 1 MiB, bad arguments) and statvfs.
+
+import core.sys
+import std.bytes
+import std.fd
+import std.fs
+import std.io
+
+fn l(s: str) -> List[u8] { sys.lit(s) }
+
+fn run() -> Result[bool, String] uses io, fs, ffi {
+    let dir = l("target/tmp/std_fs_stat")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let f = fs.join(dir, l("data.txt"))
+    fs.write_mode(f, l("0123456789abcdef"), 416)?
+
+    // a file, a directory, a link followed and not, a missing path
+    let s = fs.stat(f)?
+    print(s.size)
+    print(s.kind == fd.FILE)
+    print(s.mode)
+    print(s.mtime_ns > 1577836800000000000)
+    print(s.allocated >= s.size)
+    print(fs.stat(dir)?.kind == fd.DIR)
+    let link = fs.join(dir, l("link"))
+    fs.symlink(l("data.txt"), link)?
+    print(fs.stat(link)?.kind == fd.FILE)
+    print(fs.stat(link)?.size)
+    let ls = fs.lstat(link)?
+    print(ls.kind == fd.SYMLINK)
+    print(ls.size)
+    print(fs.lstat(f)?.kind == fd.FILE)
+    match fs.stat(fs.join(dir, l("missing"))) {
+        Ok(x) => print("found?")
+        Err(m) => print(m)
+    }
+    print(fs.lstat(fs.join(dir, l("missing"))).is_err())
+
+    // sparse: a megabyte that was never written is mostly unallocated; written data is allocated
+    let img = fs.join(dir, l("volume.img"))
+    let h = fd.open(img, fd.READ_WRITE | fd.CREATE | fd.TRUNCATE, 384)?
+    fd.truncate(h, 1048576)?
+    fd.close(h)?
+    let sp = fs.stat(img)?
+    print(sp.size)
+    print(sp.allocated < sp.size)
+    let full = fs.join(dir, l("full.bin"))
+    let mut block: List[u8] = List.new()
+    for i in 0..65536 { block.push((i % 251) as u8) }
+    fs.write(full, block)?
+    let fl = fs.stat(full)?
+    print(fl.size)
+    print(fl.allocated >= fl.size)
+
+    // read_range
+    print(fs.read_range(f, 0, 4)? == l("0123"))
+    print(fs.read_range(f, 10, 4)? == l("abcd"))
+    print(fs.read_range(f, 12, 100)? == l("cdef"))   // across the end: what there is
+    print(fs.read_range(f, 16, 4)?.len())            // at the end: empty
+    print(fs.read_range(f, 1000, 4)?.len())          // past it: empty
+    print(fs.read_range(f, 3, 0)?.len())
+    print(fs.read_range(f, 0, 1000)? == l("0123456789abcdef"))
+    // more than one read's worth (the 1 MiB limit of a single read)
+    let big = fs.join(dir, l("big.bin"))
+    let mut chunk: List[u8] = List.new()
+    for i in 0..1000 { chunk.push((i % 253) as u8) }
+    let mut all: List[u8] = List.new()
+    for i in 0..2500 { bytes.append(inout all, chunk) }
+    fs.write(big, all)?
+    let part = fs.read_range(big, 7, 2097152)?
+    print(part.len())
+    print(part == bytes.slice(all, 7, 7 + 2097152))
+    print(fs.read_range(big, 2400000, 500000)?.len())
+    print(fs.read_range(f, -1, 4).is_err())
+    print(fs.read_range(f, 0, -1).is_err())
+    print(fs.read_range(fs.join(dir, l("missing")), 0, 4).is_err())
+
+    // statvfs
+    let v = fs.statvfs(dir)?
+    print(v.block_size >= 512 && (v.block_size % 512) == 0)
+    print(v.total_bytes > 0 && v.free_bytes <= v.total_bytes && v.available_bytes <= v.free_bytes)
+    print(v.total_bytes % v.block_size == 0)
+    print(v.free_inodes <= v.total_inodes && v.available_inodes <= v.free_inodes)
+    print(fs.statvfs(f)?.block_size == v.block_size)
+    match fs.statvfs(fs.join(dir, l("missing"))) {
+        Ok(x) => print("found?")
+        Err(m) => print(m)
+    }
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn main() uses io, fs, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(m) => print(m)
+    }
+}

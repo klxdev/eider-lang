@@ -1,0 +1,11 @@
+case 3
+a literal
+case 3: timed out
+case 3: No such file or directory
+6
+case 3
+3
+true
+case 3
+true
+exit 0

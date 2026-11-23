@@ -17,7 +17,7 @@ symbols
   11 fn main compiler/tests/ide/labels.ei:25:4-25:8 full 25:1-29:2 :: fn main()
   12 local xs compiler/tests/ide/labels.ei:26:13-26:15 full 26:5-26:39 in 11 :: List[i64]
   13 local f compiler/tests/ide/labels.ei:28:9-28:10 full 28:5-28:24 in 11 :: bool
-  (95 symbols in <prelude>)
+  (105 symbols in <prelude>)
 refs
   compiler/tests/ide/labels.ei:6:20-6:22 -> 2 param xs
   compiler/tests/ide/labels.ei:8:21-8:22 -> 7 local i

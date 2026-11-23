@@ -29,6 +29,7 @@
 //! distinction writes it its own way.
 
 import std.bytes
+import std.strings
 import std.time
 import std.validate
 
@@ -78,7 +79,7 @@ pub fn combine(xs: List[Error]) -> Error {
 }
 
 /// An error with no path yet.
-pub fn error(msg: str) -> Error { Error(List.new(), msg.bytes(), List.new()) }
+pub fn error[T: strings.Text](msg: T) -> Error { Error(List.new(), msg.text().bytes(), List.new()) }
 
 /// An error with this message at `path`.
 pub fn error_at(path: List[u8], msg: List[u8]) -> Error { Error(path, msg, List.new()) }
@@ -213,16 +214,16 @@ pub trait Deserialize {
 }
 
 /// The error for a value of the wrong kind: "expected <what>, found <kind>" at the path.
-pub fn expected[D: Deserializer](d: D, what: str) -> Error {
+pub fn expected[D: Deserializer, T: strings.Text](d: D, what: T) -> Error {
     let mut m = "expected ".bytes()
-    bytes.append(inout m, what.bytes())
+    bytes.append(inout m, what.text().bytes())
     bytes.append(inout m, ", found ".bytes())
     bytes.append(inout m, kind_name(d.kind()).bytes())
     error_at(d.path(), m)
 }
 
 /// An error with this message at the path of `d`.
-pub fn fail[D: Deserializer](d: D, msg: str) -> Error { error_at(d.path(), msg.bytes()) }
+pub fn fail[D: Deserializer, T: strings.Text](d: D, msg: T) -> Error { error_at(d.path(), msg.text().bytes()) }
 
 /// The name of a kind: "null", "a boolean", ...
 pub fn kind_name(k: Kind) -> str {
@@ -402,6 +403,18 @@ impl[T: Deserialize] Deserialize for List[T] {
     }
 }
 
+/// A value that can be absent: `skip_none` asks a field's value (`Option[T]` is the one that is).
+pub trait Optional { fn is_absent(self) -> bool }
+
+impl[T] Optional for Option[T] {
+    fn is_absent(self) -> bool {
+        match self {
+            Some(_) => false
+            None => true
+        }
+    }
+}
+
 impl[T: Serialize] Serialize for Option[T] {
     fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
         match self {
@@ -489,8 +502,8 @@ pub type Value =
     | VTime(time.DateTime)
 
 /// The member `key` of a `VMap`, None when `v` is not one or has no such member.
-pub fn member(v: Value, key: str) -> Option[Value] {
-    let k = key.bytes()
+pub fn member[T: strings.Text](v: Value, key: T) -> Option[Value] {
+    let k = key.text().bytes()
     match v {
         VMap(es) => {
             for e in es {
@@ -1048,20 +1061,22 @@ impl[T: Checkable] Checkable for Map[String, T] {
 
 /// How a type, field or variant maps to the data model, for every format. On a field: `name`
 /// (the key it is written under; default the field's name), `skip` (never written; read as
-/// its Default), `default` (when absent on reading: its Default instead of an error). On a
+/// its Default), `skip_none` (an `Option` field that is `None` is left out when writing instead of
+/// written as a null: for APIs that treat absent and null differently; reading an absent field into an
+/// `Option` already gives `None`), `default` (when absent on reading: its Default instead of an error). On a
 /// variant: `name`. On a type: `rename_all` (`snake_case`, `camelCase`, `kebab-case` or
 /// `SCREAMING_SNAKE_CASE`, for the names of its fields or variants), `tag` (an enum's tag key;
 /// without one a variant with fields is written under its name).
-pub attr serial { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
+pub attr serial { name: str = "", skip: bool = false, skip_none: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
 
 /// `serial` for JSON only: what is set here wins over `serial`. Also `flatten` (a record
 /// field whose members are the outer object's; a record that has one accepts unknown members)
 /// and `unknown` (`deny`, the default, or `ignore`: what reading does with a member no field
 /// takes).
-pub attr json { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", flatten: bool = false, unknown: str = "", @[names_module] with: str = "" }
+pub attr json { name: str = "", skip: bool = false, skip_none: bool = false, default: bool = false, rename_all: str = "", tag: str = "", flatten: bool = false, unknown: str = "", @[names_module] with: str = "" }
 
 /// `serial` for TOML only: what is set here wins over `serial`; `unknown` as in `json`.
-pub attr toml { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
+pub attr toml { name: str = "", skip: bool = false, skip_none: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
 
 fn is_format(fmt: str, name: str) -> bool { bytes.eq(fmt.bytes(), name.bytes()) }
 
@@ -1143,13 +1158,21 @@ pub fn serialize_record[T, S: Serializer](x: T, inout s: S) -> Result[(), Error]
     let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
     let mut n: usize = 0
     comptime for f in fields(T) {
-        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) {
+        let mut gone = false
+        comptime if attr[serial](f).skip_none || attr[json](f).skip_none || attr[toml](f).skip_none {
+            gone = flag(fmt, attr[serial](f).skip_none, attr[json](f).skip_none, attr[toml](f).skip_none) && x.[f].is_absent()
+        }
+        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) && !gone {
             if !(attr[json](f).flatten && is_format(fmt, "json")) { n += 1 }
         }
     }
     s.begin_record(n)?
     comptime for f in fields(T) {
-        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) {
+        let mut gone = false
+        comptime if attr[serial](f).skip_none || attr[json](f).skip_none || attr[toml](f).skip_none {
+            gone = flag(fmt, attr[serial](f).skip_none, attr[json](f).skip_none, attr[toml](f).skip_none) && x.[f].is_absent()
+        }
+        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) && !gone {
             if attr[json](f).flatten && is_format(fmt, "json") {
                 s.merge_next()?
             } else {

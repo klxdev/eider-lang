@@ -1,0 +1,160 @@
+// std/fs: advisory locks released by drop (exclusive, shared, try, with a deadline, blocking in a task,
+// early return and `?`, a directory, a child that must not inherit it) and chmod / write_mode.
+// Modes are written in decimal here: 384 = 0o600, 448 = 0o700, 416 = 0o640, 493 = 0o755.
+
+import core.sys
+import std.child
+import std.fd
+import std.fs
+import std.io
+import std.strings
+import std.task
+import std.time
+
+fn busy(path: List[u8], exclusive: bool) -> bool uses fs {
+    match fs.try_lock(path, exclusive).unwrap() {
+        Some(l) => false
+        None => true
+    }
+}
+
+/// Takes the lock and leaves by an early return: the guard goes with it.
+fn early(path: List[u8], leave: bool) -> i32 uses fs {
+    let held = fs.lock(path, true).unwrap()
+    if leave { return 1 }
+    2
+}
+
+/// Takes the lock and leaves by `?`.
+fn with_question(path: List[u8]) -> Result[bool, String] uses fs {
+    let held = fs.lock(path, true)?
+    let n: Result[bool, String] = Err(String.from("boom"))
+    n?
+    Ok(true)
+}
+
+fn mode_of(path: List[u8]) -> i32 uses fs { fd.stat_path(path, true).unwrap().mode % 512 }
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi, clock, threads {
+    let dir = sys.lit("target/tmp/std_fs_lock")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let p = fs.join(dir, sys.lit("state.lock"))
+
+    // exclusive: others are refused until it is dropped (the end of the block)
+    {
+        let a = fs.lock(p, true)?
+        print(busy(p, true))
+        print(busy(p, false))
+    }
+    print(busy(p, true))
+    print(fs.exists(p))
+
+    // shared: readers coexist, a writer waits
+    {
+        let s1 = fs.lock(p, false)?
+        print(busy(p, false))
+        print(busy(p, true))
+    }
+
+    // released on an early return and on `?`
+    print(early(p, true))
+    print(busy(p, true))
+    print(early(p, false))
+    print(busy(p, true))
+    print(with_question(p).is_err())
+    print(busy(p, true))
+
+    // a deadline: times out while held, gets it once released
+    {
+        let a = fs.lock(p, true)?
+        let t0 = time.mono_ms()
+        let got = fs.lock_until(p, true, time.after_ms(80))?
+        print(got.is_none())
+        print(time.mono_ms() - t0 >= 70)
+        let passed = fs.lock_until(p, true, time.now())?
+        print(passed.is_none())
+    }
+    {
+        let free = fs.lock_until(p, true, time.after_ms(80))?
+        print(free.is_some())
+    }
+
+    // blocking in a task: it gets the lock when the holder lets go (the end of the block)
+    let mut tasks: List[Task[bool]] = List.new()
+    {
+        let a = fs.lock(p, true)?
+        tasks.push(spawn(|| -> bool {
+            let l = fs.lock(p, true).unwrap()
+            true
+        }))
+        time.sleep_ms(60)
+        print(busy(p, true))
+    }
+    for t in tasks { print(t.join()) }
+    print(busy(p, true))
+
+    // a directory can be locked
+    {
+        let d = fs.lock(dir, true)?
+        print(busy(dir, true))
+    }
+    print(busy(dir, true))
+
+    // an error says what and where
+    match fs.lock(fs.join(dir, sys.lit("no/such/dir/x.lock")), true) {
+        Ok(l) => print("locked?")
+        Err(m) => print(strings.contains(m, "cannot lock "))
+    }
+
+    // a started child does not inherit the lock: it is free while the child still runs
+    let mut kids: List[i32] = List.new()
+    {
+        let a = fs.lock(p, true)?
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(sys.lit("sleep"))
+        argv.push(sys.lit("2"))
+        let c = child.start(argv, child.NULL, child.NULL, child.NULL)?
+        kids.push(c.pid)
+    }
+    // the lock is gone with its scope while the child still runs: it did not inherit the descriptor
+    print(busy(p, true))
+    for pid in kids {
+        child.kill(pid, 9)?
+        child.wait(pid)?
+    }
+
+    // chmod, also on a file nobody can read
+    let f = fs.join(dir, sys.lit("script.sh"))
+    fs.write(f, sys.lit("#!/bin/sh\n"))?
+    fs.chmod(f, 493)?
+    print(mode_of(f))
+    fs.chmod(f, 128)?
+    print(mode_of(f))
+    print(fs.chmod(f, 4096).is_err())
+    print(fs.chmod(fs.join(dir, sys.lit("missing")), 384).is_err())
+
+    // write_mode: created with the mode, an existing file keeps its own, append_mode creates too
+    let k = fs.join(dir, sys.lit("key"))
+    fs.write_mode(k, sys.lit("secret"), 384)?
+    print(mode_of(k))
+    fs.chmod(k, 416)?
+    fs.write_mode(k, sys.lit("secret2"), 384)?
+    print(mode_of(k))
+    print(fs.read(k)? == sys.lit("secret2"))
+    let g = fs.join(dir, sys.lit("log"))
+    fs.append_mode(g, sys.lit("a"), 448)?
+    fs.append_mode(g, sys.lit("b"), 384)?
+    print(mode_of(g))
+    print(fs.read(g)? == sys.lit("ab"))
+    print(fs.write_mode(g, sys.lit("x"), 8192).is_err())
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi, clock, threads {
+    match run() {
+        Ok(_) => print("done")
+        Err(m) => print(m)
+    }
+}

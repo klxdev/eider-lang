@@ -66,6 +66,8 @@ type Args = {
     filter: List[u8],
     /// `test --bench`, `test --fuzz N` (std/testing)
     bench: bool,
+    /// `test --strict`: a skipped test is a failure (the runtime's EIDER_TEST_STRICT)
+    strict: bool,
     fuzz: u64,
     /// `lint --deny|--warn|--allow <name>` (lint.ei), in order
     lints: List[lint.Setting],
@@ -84,6 +86,8 @@ type Args = {
     /// `run --watch`, `test --watch` (watch.ei); `build --no-opt`: compile at -O0 as `run` does
     watch: bool,
     no_opt: bool,
+    /// `--target <triple>`: a static cross build (x86_64-linux-musl or aarch64-linux-musl; driver.target_triple), else empty
+    target: List[u8],
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -114,6 +118,8 @@ fn usage_text() -> List[u8] {
         "                                             only the C core's ABI (env.ec_*; the seed: seed/README.md)",
         "  eiderc run|test <file.ei> --watch          run again (stopping the program first) whenever a file it loads changes",
         "  eiderc build --no-opt <file.ei>            compile at -O0 (what run and test do)",
+        "  eiderc build <file.ei> --target <triple>   a static executable for x86_64-linux-musl or aarch64-linux-musl: clang ($CC, else clang)",
+        "                                             with --target, -static and --sysroot=$EIDER_SYSROOT (docs/site/tooling/cross.md)",
         "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
         "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --crypto <backend>  the crypto backend a program importing core/crypto links",
@@ -121,7 +127,8 @@ fn usage_text() -> List[u8] {
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)",
         "  eiderc test [<file.ei>] --coverage [--lcov FILE]  also report which lines of the package's modules the tests ran",
-        "  eiderc test                                run the tests of every module of the package in this directory",
+        "  eiderc test [<dir>]                        run the tests of every module of the package in this directory (or <dir>)",
+        "  eiderc test ... --strict                   a skipped test (`skip(reason)`) is a failure: for CI",
         "  eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)",
         "  eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
@@ -259,9 +266,11 @@ fn parse_args() -> Args uses io, fs {
     let mut coverage = false
     let mut watch = false
     let mut no_opt = false
+    let mut target: List[u8] = List.new()
     let mut lcov: List[u8] = List.new()
     let mut cov_data: List[u8] = List.new()
     let mut bench = false
+    let mut strict = false
     let mut fuzz: u64 = 0
     let mut filter: List[u8] = List.new()
     let mut dashes = false
@@ -290,6 +299,11 @@ fn parse_args() -> Args uses io, fs {
             lib = true
         } else if is(a, "--wasm") {
             wasm = true
+        } else if is(a, "--target") {
+            if i >= argv.len() { usage_error(sys.lit("`--target` needs a triple (x86_64-linux-musl or aarch64-linux-musl)")) }
+            target = driver.target_triple(argv[i])
+            if target.len() == 0 { usage_error(quoted("unsupported target (x86_64-linux-musl and aarch64-linux-musl are): ", argv[i])) }
+            i += 1
         } else if is(a, "--wasm-core") {
             wasm_core = true
         } else if is(a, "--compile-fail") {
@@ -355,6 +369,8 @@ fn parse_args() -> Args uses io, fs {
             i += 1
         } else if is(a, "--bench") {
             bench = true
+        } else if is(a, "--strict") {
+            strict = true
         } else if is(a, "--fuzz") {
             if i >= argv.len() { usage_error(sys.lit("`--fuzz` needs a number of cases")) }
             match bytes.parse_u64(argv[i]) {
@@ -429,6 +445,7 @@ fn parse_args() -> Args uses io, fs {
     if wasm_core && (wasm || lib) { usage_error(sys.lit("`--wasm-core` builds a program: not with --wasm or --lib")) }
     if wasm { lib = true }
     if profile > 0 && (lib || wasm_core || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-llvm"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-llvm, without --lib or --wasm")) }
+    if strict && !is(cmd, "test") { usage_error(sys.lit("`--strict` goes with `test`")) }
     if (bench || fuzz > 0) && !is(cmd, "test") { usage_error(sys.lit("`--bench` and `--fuzz` go with `test`")) }
     if filter.len() > 0 && !(is(cmd, "test") || is(cmd, "expand")) { usage_error(sys.lit("`--filter` goes with `test`")) }
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
@@ -436,11 +453,13 @@ fn parse_args() -> Args uses io, fs {
     if ir_text && !is(cmd, "expand") { usage_error(sys.lit("`--ir` goes with `expand`")) }
     if watch && !(is(cmd, "run") || is(cmd, "test")) { usage_error(sys.lit("`--watch` goes with `run` and `test`")) }
     if watch && (compile_fail || lib || wasm || wasm_core) { usage_error(sys.lit("`--watch` runs programs and tests: not with --compile-fail, --lib or --wasm")) }
+    if target.len() > 0 && !(is(cmd, "build") || is(cmd, "emit-llvm")) { usage_error(sys.lit("`--target` goes with `build` or `emit-llvm`: a cross-built program runs on another machine")) }
+    if target.len() > 0 && (lib || wasm || wasm_core) { usage_error(sys.lit("`--target` builds a program: not with --lib, --wasm or --wasm-core")) }
     if no_opt && !is(cmd, "build") { usage_error(sys.lit("`--no-opt` goes with `build`")) }
     if coverage && !is(cmd, "test") { usage_error(sys.lit("`--coverage`, `--lcov` and `--coverage-data` go with `test`")) }
     if coverage && compile_fail { usage_error(sys.lit("`--coverage` measures `test` blocks, not a compile-fail suite")) }
     if coverage && (profile > 0) { usage_error(sys.lit("`--coverage` and `--profile` don't go together")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text, coverage, lcov, cov_data, watch, no_opt)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, strict, fuzz, lints, list, write, check, ir_text, coverage, lcov, cov_data, watch, no_opt, target)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -591,6 +610,7 @@ fn test_env(a: Args) -> List[List[u8]] {
     if !is(a.cmd, "test") { return out }
     if a.filter.len() > 0 { out.push(bytes.concat(sys.lit("EIDER_TEST_FILTER="), a.filter)) }
     if a.bench { out.push(sys.lit("EIDER_TEST_BENCH=1")) }
+    if a.strict { out.push(sys.lit("EIDER_TEST_STRICT=1")) }
     if a.fuzz > 0 { out.push(bytes.concat(sys.lit("EIDER_TEST_FUZZ="), bytes.from_u64(a.fuzz))) }
     out
 }
@@ -603,6 +623,7 @@ fn test_flags(a: Args) -> List[List[u8]] {
         out.push(a.filter)
     }
     if a.bench { out.push(sys.lit("--bench")) }
+    if a.strict { out.push(sys.lit("--strict")) }
     if a.fuzz > 0 {
         out.push(sys.lit("--fuzz"))
         out.push(bytes.from_u64(a.fuzz))
@@ -771,8 +792,10 @@ fn main() uses io, fs, net, clock {
     let a = parse_args()
     if a.watch { env.exit(run_watch(a)) }
     if a.compile_fail { env.exit(suite.run(a.file)) }
-    if is(a.cmd, "test") && a.file.len() == 0 {
-        env.exit(pkgtest.run(env.args()[0], test_flags(a), a.coverage, a.lcov))
+    // `test` with no file, or with a directory: every test of the package there (pkgtest.ei)
+    if is(a.cmd, "test") && (a.file.len() == 0 || fs.is_dir(a.file)) {
+        let pdir = if a.file.len() == 0 { sys.lit(".") } else { a.file.copy() }
+        env.exit(pkgtest.run(env.args()[0], test_flags(a), a.coverage, a.lcov, pdir))
         return
     }
     if is(a.cmd, "cache") {
@@ -916,7 +939,7 @@ fn main() uses io, fs, net, clock {
             for x in driver.crypto_libs(paths, a.file, a.crypto) { libs.push(x) }
         }
         // the target: wasm32, else the one clang builds for (x86-64 or AArch64)
-        let arch = if wt { abi.WASM32 } else { driver.target_arch() }
+        let arch = if wt { abi.WASM32 } else { driver.target_arch(a.target) }
         let out = match llvm.program_prof(lp, a.file, tests, a.lib, paths, here, a.debug && !wt, arch, a.profile, driver.version(), !wt && driver.llvm_f0x()) {
             Ok(o) => o
             Err(m) => {
@@ -953,7 +976,7 @@ fn main() uses io, fs, net, clock {
                 }
             }
             if is(a.cmd, "build") {
-                driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs, !a.no_opt)
+                driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs, !a.no_opt, a.target)
             } else if a.coverage {
                 let r = driver.run_llvm_ran(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, test_env(a), a.jobs, true)
                 finish_coverage(a, plan, r.cov)

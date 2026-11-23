@@ -653,7 +653,7 @@ fn hole(src: List[u8], inout l: L, end: usize, all: bool, inout toks: List[Tok],
     while true {
         if j >= end && at(src, j) == 34 && at(src, j + 1) != 10 && j + 1 < src.len() && text_end(src, j + 1) < src.len() && src[text_end(src, j + 1)] == 34 {
             // `{f("x")}`: the literal seems to end inside the braces
-            bad.push(fail(open, "a string literal's `\x7b...\x7d` can't contain `\x7b`, `\"` or a comment: bind the value to a name first"))
+            bad.push(fail(open, "a string literal's `\x7b...\x7d` can't contain `\x7b`, `\"` or a comment: bind the value to a name first. For a literal brace (JSON, say) write `\x7b\x7b` and `\x7d\x7d`, or use a raw string"))
             return false
         }
         if j >= end {
@@ -662,7 +662,7 @@ fn hole(src: List[u8], inout l: L, end: usize, all: bool, inout toks: List[Tok],
         }
         let b = src[j]
         if b == 123 || b == 34 || (b == 47 && (at(src, j + 1) == 47 || at(src, j + 1) == 42)) {
-            bad.push(fail(open, "a string literal's `\x7b...\x7d` can't contain `\x7b`, `\"` or a comment: bind the value to a name first"))
+            bad.push(fail(open, "a string literal's `\x7b...\x7d` can't contain `\x7b`, `\"` or a comment: bind the value to a name first. For a literal brace (JSON, say) write `\x7b\x7b` and `\x7d\x7d`, or use a raw string"))
             return false
         }
         if b == 40 || b == 91 { depth += 1 }

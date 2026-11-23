@@ -212,6 +212,67 @@ has one encoding. Integers: `push_u32_le(inout out, v)` ... and `u32_le(bytes, a
 Option[u32]` ..., for 16 (in a u32), 32 and 64 bits, unsigned and signed, both byte orders;
 `bits64`/`signed64` convert two's complement.
 
+## Text arguments: `str` or `String` (`strings.Text`)
+
+A `str` cannot be made from a `String` (it would be a pointer that could outlive its owner), so a function that only
+reads its text takes `T: strings.Text` and accepts either: `stream.error`, `os_error`, `timed_out`, `write_str`,
+`reader_str`; `serial.error`, `fail`, `expected`, `member`; `testing.suite`, `table`, `bench`, `fuzz`, `temp_dir`. Text built
+at run time (an interpolated literal, a field) can be passed as it is. Every call that passed a `str` still compiles
+(tests/std/text_generic.ei). A library that has its own `str` parameter does the same.
+
+## Files: stat, ranges, space (`std/fs`)
+
+`fs.stat(path)` and `fs.lstat(path)` (the link itself) give a `fd.Stat`: `size`, `kind` (`fd.FILE`, `fd.DIR`, `fd.SYMLINK`, ...),
+`mode`, `mtime_ns` and `allocated`, the bytes on disk: below `size` for a sparse file, which is how a volume image made with
+`fd.truncate` is told from a full one. `fs.read_range(path, offset, max)` reads a part of a file (a `Range` request) without loading
+it, and `fs.statvfs(path)` is the file system's block size, total, free and available bytes and inodes (`available` is what an
+unprivileged process can use). Tests: tests/std/fs_stat.ei.
+
+## Starting programs (`std/child`)
+
+`child.start_with(argv, options)` starts a program with no shell in between and says which step failed if it can't:
+
+```eider,ignore
+let o = child.options()
+    .with_stdout(child.Append(log)).with_stderr(child.Stdout)     // the console to a file, both streams in order
+    .with_env(name, value).with_cwd(dir)
+    .detached()                                                    // a new session: outlives our terminal
+let c = child.start_with(argv, o)?
+...
+child.kill_group(c.pid, signal.TERM)?                              // the child and what it started
+```
+
+A stream is `Inherit`, `Null`, `Pipe`, `File(path)` (stdin: read it; stdout, stderr: create and truncate), `Append(path)`,
+`Fd(n)` (a duplicate of our descriptor) or, for stderr, `Stdout`. The environment is ours plus the given variables, or only
+them with `clear_env()`; the program is looked up on the child's `PATH`. `with_group()` makes a new process group;
+`kill_group`, `wait_group`, `setsid`, `set_group` and `group_of` are the group and session calls. `child.start` is unchanged
+(tests/std/child_spawn.ei).
+
+## Files: locks, modes (`std/fs`)
+
+`fs.lock(path, exclusive)` (waits), `fs.try_lock` (`Option`) and `fs.lock_until(path, exclusive, deadline)` (`Option`) take an
+advisory `flock` and return a `Lock` that is released when it is dropped: keep it in a variable and every way out of the scope
+(the end, an early `return`, `?`) releases it. It is how several short-lived processes share state files:
+
+```eider,ignore
+let held = fs.lock(fs.join(dir, "state.lock".bytes()), true)?
+// read, change and write the files; `held` goes with the scope
+```
+
+A missing lock file is created (never truncated or removed); a directory can be locked; a started child does not inherit the
+lock; two locks of one path conflict inside one process too. `fs.chmod(path, mode)` sets permission bits by path;
+`fs.write_mode(path, data, mode)` and `fs.append_mode` create the file with `mode` (before the umask) in the same `open`, so a
+key file is never readable, even briefly, and an existing file keeps its mode. Modes above `0o7777` are errors. Tests:
+tests/std/fs_lock.ei, tests/std/fs_lock_procs.ei (four processes, one counter).
+
+## Embedded files (`std/embed`)
+
+`const WEB: List[u8] = comptime embed_dir("web")` packs every file under a directory into the program
+(docs/site/reference/comptime.md, "A directory"); `std/embed` reads it with no capability: `get(archive, path)`
+(`Option[List[u8]]`, copies only that file), `paths(archive)`, `assets(archive)` (`List[Asset]`, `Asset = { path, data }`)
+and `count`. Take the constant once into a `let` (each use is a copy). Bytes that are not an archive give `Err`/`None`,
+never a trap (tests/run/embed_dir.ei).
+
 ## Testing (`std/testing`, `time.Clock`)
 
 Decision C10: since I/O goes through interfaces, tests can replace it.

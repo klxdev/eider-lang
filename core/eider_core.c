@@ -51,6 +51,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -556,148 +557,6 @@ static int above_stdio(int fd) {
 #define EC_RUN_TIMEOUT 256
 #define EC_RUN_GRACE_MS 200
 
-/* Run argv = in[0..] (searched on PATH); contract in ABI.md "Running a program".
-   out_mode / err_mode: 0 inherit, 1 capture. timeout_ms > 0: SIGTERM the child's process
-   group at the deadline, SIGKILL after EC_RUN_GRACE_MS. Returns the exit code, 128+signal,
-   EC_RUN_TIMEOUT, or -errno. out = 8-byte little-endian stdout length, stdout, stderr. */
-EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms)) {
-  if (in_len == 0 || out_mode < 0 || out_mode > 1 || err_mode < 0 || err_mode > 1) return -EINVAL;
-  int limited = timeout_ms > 0;
-  if (timeout_ms > 1000000000000) timeout_ms = 1000000000000; /* ~31 years: no overflow */
-  int argc = 0;
-  while (arg(argc)) argc++;
-  char **argv = calloc((size_t)argc + 1, sizeof *argv);
-  if (!argv) return -ENOMEM;
-  for (int k = 0; k < argc; k++) argv[k] = (char *)arg(k);
-  /* op: stdout, ep: stderr, xp: exec errno (closes on a successful exec) */
-  int op[2] = {-1, -1}, ep[2] = {-1, -1}, xp[2] = {-1, -1};
-  if ((out_mode && cloexec_pipe(op) != 0) || (err_mode && cloexec_pipe(ep) != 0) ||
-      cloexec_pipe(xp) != 0) {
-    int64_t r = fail();
-    close_fd(&op[0]); close_fd(&op[1]); close_fd(&ep[0]); close_fd(&ep[1]);
-    free(argv);
-    return r;
-  }
-  int64_t deadline = limited ? now_ms() + timeout_ms : 0;
-  fflush(stdout);
-  fflush(stderr);
-  sigset_t oldmask;
-  block_signals(&oldmask);
-  pid_t pid = fork();
-  if (pid != 0) restore_signals(&oldmask);
-  if (pid < 0) {
-    int64_t r = fail();
-    close_fd(&op[0]); close_fd(&op[1]); close_fd(&ep[0]); close_fd(&ep[1]);
-    close_fd(&xp[0]); close_fd(&xp[1]);
-    free(argv);
-    return r;
-  }
-  if (pid == 0) {
-    /* only async-signal-safe calls until exec */
-    child_reset_signals();
-    if (limited) setpgid(0, 0);
-    int x = above_stdio(xp[1]), o = above_stdio(op[1]), e = above_stdio(ep[1]);
-    if (x < 0) _exit(127);
-    if ((out_mode && (o < 0 || dup2(o, 1) < 0)) || (err_mode && (e < 0 || dup2(e, 2) < 0))) {
-      int en = errno;
-      (void)!write(x, &en, sizeof en);
-      _exit(127);
-    }
-    execvp(argv[0], argv);
-    int en = errno;
-    (void)!write(x, &en, sizeof en);
-    _exit(127);
-  }
-  free(argv);
-  if (limited) setpgid(pid, pid); /* also here, so the group exists whichever runs first */
-  close_fd(&op[1]);
-  close_fd(&ep[1]);
-  close_fd(&xp[1]);
-  int xe = 0, status = 0, reaped = 0, stage = 0; /* stage: 0 running, 1 TERM sent, 2 KILL sent */
-  int64_t err = 0;
-  ssize_t got;
-  do got = read(xp[0], &xe, sizeof xe); while (got < 0 && errno == EINTR);
-  close_fd(&xp[0]);
-  if (got == (ssize_t)sizeof xe) { /* exec failed; the child has exited */
-    close_fd(&op[0]);
-    close_fd(&ep[0]);
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    return xe > 0 ? -(int64_t)xe : -EIO;
-  }
-  out_len = 0;
-  out_put("\0\0\0\0\0\0\0\0", 8);
-  unsigned char *eb = NULL;
-  size_t elen = 0, ecap = 0;
-  char buf[65536];
-  for (;;) {
-    struct pollfd pf[2];
-    nfds_t n = 0;
-    if (op[0] >= 0) { pf[n].fd = op[0]; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
-    if (ep[0] >= 0) { pf[n].fd = ep[0]; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
-    if (n == 0 && !limited) break; /* both pipes closed: the blocking reap below */
-    if (n == 0) {                   /* the child closed its pipes; it may still be running */
-      pid_t w = waitpid(pid, &status, WNOHANG);
-      if (w == pid) { reaped = 1; break; }
-      if (w < 0 && errno != EINTR) { err = fail(); break; }
-    }
-    int wait_ms = -1;
-    if (limited) {
-      int64_t now = now_ms(), left = deadline - now;
-      if (left <= 0) {
-        if (stage == 2) break; /* give up on the pipes; the child got SIGKILL */
-        int sig = stage == 0 ? SIGTERM : SIGKILL;
-        if (kill(-pid, sig) != 0) kill(pid, sig);
-        stage++;
-        deadline = now + EC_RUN_GRACE_MS;
-        continue;
-      }
-      int64_t cap = n == 0 ? 10 : 1000000; /* without pipes, poll the child every 10 ms */
-      wait_ms = (int)(left < cap ? left : cap);
-    }
-    if (n == 0) {
-      if (poll(pf, 0, wait_ms) < 0 && errno != EINTR) { err = fail(); break; }
-      continue;
-    }
-    if (poll(pf, n, wait_ms) < 0) {
-      if (errno == EINTR) continue;
-      err = fail();
-      break;
-    }
-    for (nfds_t i = 0; i < n; i++) {
-      if (!pf[i].revents) continue;
-      ssize_t r = read(pf[i].fd, buf, sizeof buf);
-      if (r < 0 && (errno == EINTR || errno == EAGAIN)) continue;
-      int *fd = pf[i].fd == op[0] ? &op[0] : &ep[0];
-      if (r <= 0) { close_fd(fd); continue; }
-      if (fd == &op[0]) {
-        out_put(buf, (size_t)r);
-      } else {
-        reserve(&eb, &ecap, elen + (size_t)r);
-        memcpy(eb + elen, buf, (size_t)r);
-        elen += (size_t)r;
-      }
-    }
-  }
-  close_fd(&op[0]);
-  close_fd(&ep[0]);
-  if (!reaped) {
-    if (err && (!limited || kill(-pid, SIGKILL) != 0)) kill(pid, SIGKILL);
-    pid_t w;
-    while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {}
-    if (w < 0 && !err) err = fail();
-  }
-  if (err) {
-    free(eb);
-    return err;
-  }
-  uint64_t olen = (uint64_t)(out_len - 8);
-  for (int i = 0; i < 8; i++) out_p[i] = (unsigned char)(olen >> (8 * i));
-  out_put(eb, elen);
-  free(eb);
-  if (stage > 0) return EC_RUN_TIMEOUT;
-  return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-}
-
 // ---- files: the path is in[0]
 
 EC_FN(int64_t, ec_read_file, (void)) {
@@ -721,6 +580,37 @@ EC_FN(int64_t, ec_write_file, (int32_t append)) {
   size_t w = n ? fwrite(in_p + off, 1, n, f) : 0;
   if (fclose(f) != 0 || w != n) return -EIO;
   return 0;
+}
+
+/* ec_write_file, but a file that is created gets `mode & 07777` (before the umask) in the same
+   open(2), so it is never more permissive than asked; an existing file keeps its mode. */
+EC_FN(int64_t, ec_write_file_mode, (int32_t append, int32_t mode)) {
+  const char *path = arg(0);
+  size_t off = strlen(path) + 1, n = in_len > off ? in_len - off : 0;
+  if (mode < 0 || mode > 07777) return -EINVAL;
+  int fd;
+  do fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC | (append ? O_APPEND : O_TRUNC), (mode_t)mode);
+  while (fd < 0 && errno == EINTR);
+  if (fd < 0) return fail();
+  const unsigned char *p = in_p + off;
+  while (n > 0) {
+    ssize_t w = write(fd, p, n);
+    if (w < 0) {
+      if (errno == EINTR) continue;
+      int64_t e = fail();
+      close(fd);
+      return e;
+    }
+    p += w;
+    n -= (size_t)w;
+  }
+  return close(fd) != 0 ? -EIO : 0;
+}
+
+/* in[0] path: its permission bits set to `mode` (0 to 07777; chmod(2), follows symlinks). */
+EC_FN(int64_t, ec_chmod, (int32_t mode)) {
+  if (mode < 0 || mode > 07777) return -EINVAL;
+  return chmod(arg(0), (mode_t)mode) == 0 ? 0 : fail();
 }
 
 /* Entry names into out, each followed by NUL ("." and ".." skipped; order unspecified). */
@@ -866,6 +756,7 @@ static void stat_put(const struct stat *st) {
   out_u64((uint64_t)kind);
   out_u64((uint64_t)(st->st_mode & 07777));
   out_u64((uint64_t)((int64_t)m->tv_sec * 1000000000 + (int64_t)m->tv_nsec));
+  out_u64((uint64_t)((int64_t)st->st_blocks * 512)); /* allocated on disk: less than the size for a sparse file */
 }
 
 EC_FN(int64_t, ec_fd_stat, (int32_t fd)) {
@@ -882,6 +773,22 @@ EC_FN(int64_t, ec_stat, (int32_t follow)) {
   out_len = 0;
   if ((follow ? stat(arg(0), &st) : lstat(arg(0), &st)) != 0) return fail();
   stat_put(&st);
+  return 0;
+}
+
+/* in[0] path: statvfs(3) into out, seven u64: fragment size, blocks, free blocks, blocks available to
+   a process without privilege, inodes, free inodes, inodes available (blocks count fragment-size units). */
+EC_FN(int64_t, ec_statvfs, (void)) {
+  struct statvfs v;
+  out_len = 0;
+  if (statvfs(arg(0), &v) != 0) return fail();
+  out_u64((uint64_t)v.f_frsize);
+  out_u64((uint64_t)v.f_blocks);
+  out_u64((uint64_t)v.f_bfree);
+  out_u64((uint64_t)v.f_bavail);
+  out_u64((uint64_t)v.f_files);
+  out_u64((uint64_t)v.f_ffree);
+  out_u64((uint64_t)v.f_favail);
   return 0;
 }
 
@@ -2296,28 +2203,116 @@ int64_t ec_random_fill(void *dst, uint64_t n) {
 
 // ---- processes (ABI.md "Processes")
 
-/* Start in = argv (searched on PATH). in_mode/out_mode/err_mode for the child's 0/1/2:
-   0 inherit, 1 /dev/null, 2 a pipe. Returns the pid; out = our ends of the three pipes (4
-   bytes LE each, -1 where not a pipe), close-on-exec and blocking. */
-EC_FN(int64_t, ec_spawn, (int32_t in_mode, int32_t out_mode, int32_t err_mode)) {
-  int32_t mode[3] = {in_mode, out_mode, err_mode};
+#if defined(__APPLE__)
+#define EC_ENVIRON (*_NSGetEnviron())
+#else
+extern char **environ;
+#define EC_ENVIRON environ
+#endif
+
+/* ec_spawn_ex flags, stream modes and failure stages (ABI.md "Processes"). */
+#define SPAWN_NEW_SESSION 1
+#define SPAWN_NEW_GROUP 2
+#define SPAWN_CLEAR_ENV 4
+#define SPAWN_CWD 8
+#define SPAWN_MODES 0xff
+enum { SP_FORK = 0, SP_OPEN = 10 /* + stream 0..2 */, SP_CHDIR = 20, SP_SESSION = 21, SP_STDIO = 22, SP_EXEC = 23 };
+
+/* The child's environment: ours without the names `ent` sets, then `ent` (NAME=value); or only
+   `ent` when `clear`. Built before the fork (it allocates). NULL: out of memory. */
+static char **spawn_env(int clear, int n, const char **ent) {
+  size_t base = 0;
+  if (!clear)
+    while (EC_ENVIRON && EC_ENVIRON[base]) base++;
+  char **envp = calloc(base + (size_t)n + 1, sizeof *envp);
+  if (!envp) return NULL;
+  size_t m = 0;
+  if (!clear) {
+    for (size_t i = 0; i < base; i++) {
+      int hidden = 0;
+      for (int j = 0; j < n && !hidden; j++) {
+        size_t nl = (size_t)(strchr(ent[j], '=') - ent[j]);
+        hidden = strncmp(EC_ENVIRON[i], ent[j], nl) == 0 && EC_ENVIRON[i][nl] == '=';
+      }
+      if (!hidden) envp[m++] = EC_ENVIRON[i];
+    }
+  }
+  for (int j = 0; j < n; j++) envp[m++] = (char *)ent[j];
+  return envp;
+}
+
+/* The one process start. `*_spec`: stream mode in the low byte (0 inherit, 1 /dev/null, 2 pipe,
+   3 file: read for stdin, created and truncated for stdout and stderr, 4 file appended (not stdin),
+   5 a descriptor of ours in bits 8.. (a duplicate), 6 stderr only: the same as stdout), `flags`:
+   1 new session, 2 new process group, 4 the environment is only the given entries, 8 a working
+   directory. `in` = argc argument strings, envc `NAME=value` strings, the directory when flag 8,
+   then the path of each stream of mode 3 or 4, in stream order, all NUL-terminated. On failure
+   -errno and out = u32 stage (SP_*: which step, 10 + n a stream's file or descriptor), the child
+   already reaped; else the pid and out = our ends of the three pipes, as ec_spawn. */
+EC_FN(int64_t, ec_spawn_ex, (int32_t in_spec, int32_t out_spec, int32_t err_spec, int32_t flags, int32_t argc, int32_t envc)) {
+  int32_t spec[3] = {in_spec, out_spec, err_spec};
+  int mode[3], sfd[3];
   out_len = 0;
-  if (in_len == 0) return -EINVAL;
-  for (int k = 0; k < 3; k++)
-    if (mode[k] < 0 || mode[k] > 2) return -EINVAL;
-  int argc = 0;
-  while (arg(argc)) argc++;
+  if (argc < 1 || envc < 0 || flags < 0 || flags > 15) return -EINVAL;
+  int nstr = argc + envc + ((flags & SPAWN_CWD) ? 1 : 0);
+  for (int k = 0; k < 3; k++) {
+    if (spec[k] < 0) return -EINVAL;
+    mode[k] = spec[k] & SPAWN_MODES;
+    sfd[k] = spec[k] >> 8;
+    int top = k == 0 ? 3 : k == 1 ? 5 : 6;
+    if (mode[k] > top || (k == 0 && mode[k] == 4)) return -EINVAL;
+    if (mode[k] == 3 || mode[k] == 4) nstr++;
+  }
+  if (!arg(nstr - 1) || arg(nstr)) return -EINVAL;
   char **argv = calloc((size_t)argc + 1, sizeof *argv);
-  if (!argv) return -ENOMEM;
+  const char **ent = calloc((size_t)envc + 1, sizeof *ent);
+  if (!argv || !ent) {
+    free(argv);
+    free(ent);
+    return -ENOMEM;
+  }
   for (int k = 0; k < argc; k++) argv[k] = (char *)arg(k);
-  int p[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}}, xp[2] = {-1, -1}, nul = -1;
+  for (int k = 0; k < envc; k++) {
+    ent[k] = arg(argc + k);
+    if (ent[k][0] == '=' || !strchr(ent[k], '=')) {
+      free(argv);
+      free(ent);
+      return -EINVAL;
+    }
+  }
+  int next = argc + envc;
+  const char *cwd = (flags & SPAWN_CWD) ? arg(next++) : NULL;
+  const char *path[3] = {NULL, NULL, NULL};
+  for (int k = 0; k < 3; k++)
+    if (mode[k] == 3 || mode[k] == 4) path[k] = arg(next++);
+  char **envp = (envc > 0 || (flags & SPAWN_CLEAR_ENV)) ? spawn_env(flags & SPAWN_CLEAR_ENV, envc, ent) : NULL;
+  free(ent);
+  if ((envc > 0 || (flags & SPAWN_CLEAR_ENV)) && !envp) {
+    free(argv);
+    return -ENOMEM;
+  }
+  int p[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}}, xp[2] = {-1, -1}, nul = -1, fsrc[3] = {-1, -1, -1};
   int64_t err = 0;
-  if (in_mode == 2) ignore_sigpipe_once();
+  int stage = SP_FORK;
+  if (mode[0] == 2) ignore_sigpipe_once();
   for (int k = 0; k < 3 && !err; k++)
     if (mode[k] == 2 && cloexec_pipe(p[k]) != 0) err = fail();
-  if (!err && (in_mode == 1 || out_mode == 1 || err_mode == 1)) {
+  if (!err && (mode[0] == 1 || mode[1] == 1 || mode[2] == 1)) {
     nul = open("/dev/null", O_RDWR | O_CLOEXEC);
     if (nul < 0) err = fail();
+  }
+  for (int k = 0; k < 3 && !err; k++) {
+    if (mode[k] == 3 || mode[k] == 4) {
+      int of = k == 0 ? O_RDONLY : O_WRONLY | O_CREAT | (mode[k] == 4 ? O_APPEND : O_TRUNC);
+      do fsrc[k] = open(path[k], of | O_CLOEXEC, 0666); while (fsrc[k] < 0 && errno == EINTR);
+      if (fsrc[k] < 0) {
+        err = fail();
+        stage = SP_OPEN + k;
+      }
+    } else if (mode[k] == 5 && fcntl(sfd[k], F_GETFD) < 0) {
+      err = fail();
+      stage = SP_OPEN + k;
+    }
   }
   if (!err && cloexec_pipe(xp) != 0) err = fail();
   pid_t pid = -1;
@@ -2337,35 +2332,45 @@ EC_FN(int64_t, ec_spawn, (int32_t in_mode, int32_t out_mode, int32_t err_mode)) 
     int x = above_stdio(xp[1]);
     int src[3];
     for (int k = 0; k < 3; k++)
-      src[k] = above_stdio(mode[k] == 2 ? p[k][k == 0 ? 0 : 1] : mode[k] == 1 ? nul : -1);
+      src[k] = above_stdio(mode[k] == 2 ? p[k][k == 0 ? 0 : 1] : mode[k] == 1 ? nul : (mode[k] == 3 || mode[k] == 4) ? fsrc[k] : mode[k] == 5 ? sfd[k] : -1);
     if (x < 0) _exit(127);
+    int rep[2];
+#define SPAWN_FAIL(st) \
+  do { \
+    rep[0] = (st); \
+    rep[1] = errno; \
+    (void)!write(x, rep, sizeof rep); \
+    _exit(127); \
+  } while (0)
+    if ((flags & SPAWN_NEW_SESSION) ? setsid() < 0 : (flags & SPAWN_NEW_GROUP) && setpgid(0, 0) < 0) SPAWN_FAIL(SP_SESSION);
+    if (cwd && chdir(cwd) < 0) SPAWN_FAIL(SP_CHDIR);
     for (int k = 0; k < 3; k++) {
-      if (mode[k] == 0) continue;
-      if (src[k] < 0 || dup2(src[k], k) < 0) {
-        int en = errno;
-        (void)!write(x, &en, sizeof en);
-        _exit(127);
-      }
+      if (mode[k] == 0 || mode[k] == 6) continue;
+      if (src[k] < 0 || dup2(src[k], k) < 0) SPAWN_FAIL(SP_STDIO);
     }
+    if (mode[2] == 6 && dup2(1, 2) < 0) SPAWN_FAIL(SP_STDIO);
+    if (envp) EC_ENVIRON = envp;
     execvp(argv[0], argv);
-    int en = errno;
-    (void)!write(x, &en, sizeof en);
-    _exit(127);
+    SPAWN_FAIL(SP_EXEC);
+#undef SPAWN_FAIL
   }
   free(argv);
+  free(envp);
   close_fd(&nul);
   close_fd(&xp[1]);
   close_fd(&p[0][0]);
   close_fd(&p[1][1]);
   close_fd(&p[2][1]);
+  for (int k = 0; k < 3; k++) close_fd(&fsrc[k]);
   if (!err) {
-    int xe = 0;
+    int rep[2] = {0, 0};
     ssize_t got;
-    do got = read(xp[0], &xe, sizeof xe); while (got < 0 && errno == EINTR);
-    if (got == (ssize_t)sizeof xe) { /* exec failed; the child has exited */
+    do got = read(xp[0], rep, sizeof rep); while (got < 0 && errno == EINTR);
+    if (got > 0) { /* the child failed before or at exec and has exited */
       int st;
       while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
-      err = xe > 0 ? -(int64_t)xe : -EIO;
+      err = got == (ssize_t)sizeof rep && rep[1] > 0 ? -(int64_t)rep[1] : -EIO;
+      stage = got == (ssize_t)sizeof rep ? rep[0] : SP_EXEC;
     }
   }
   close_fd(&xp[0]);
@@ -2373,12 +2378,207 @@ EC_FN(int64_t, ec_spawn, (int32_t in_mode, int32_t out_mode, int32_t err_mode)) 
     close_fd(&p[0][1]);
     close_fd(&p[1][0]);
     close_fd(&p[2][0]);
+    out_len = 0;
+    out_u32((uint32_t)stage);
     return err;
   }
   out_u32((uint32_t)p[0][1]);
   out_u32((uint32_t)p[1][0]);
   out_u32((uint32_t)p[2][0]);
   return pid;
+}
+
+/* Start in = argv (searched on PATH). in_mode/out_mode/err_mode for the child's 0/1/2:
+   0 inherit, 1 /dev/null, 2 a pipe. Returns the pid; out = our ends of the three pipes (4
+   bytes LE each, -1 where not a pipe), close-on-exec and blocking. ec_spawn_ex with no options. */
+EC_FN(int64_t, ec_spawn, (int32_t in_mode, int32_t out_mode, int32_t err_mode)) {
+  out_len = 0;
+  if (in_len == 0) return -EINVAL;
+  int32_t mode[3] = {in_mode, out_mode, err_mode};
+  for (int k = 0; k < 3; k++)
+    if (mode[k] < 0 || mode[k] > 2) return -EINVAL;
+  int argc = 0;
+  while (arg(argc)) argc++;
+  int64_t r = ec_spawn_ex(in_mode, out_mode, err_mode, 0, argc, 0);
+  if (r < 0) out_len = 0;
+  return r;
+}
+
+static uint32_t le32_at(const unsigned char *b) {
+  return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
+}
+
+/* The one run: the child is started by ec_spawn_ex (so it has the same options: environment,
+   directory, session), its stdout/stderr are collected, `sdata` is fed to its stdin when `has_in`
+   (then closed), and it is reaped; contract in ABI.md "Running a program". `in` holds the strings
+   ec_spawn_ex takes (NUL-separated). */
+static int64_t run_impl(int out_mode, int err_mode, int64_t timeout_ms, int flags, int argc, int envc, int has_in, const unsigned char *sdata, size_t slen) {
+  int limited = timeout_ms > 0;
+  if (timeout_ms > 1000000000000) timeout_ms = 1000000000000; /* ~31 years: no overflow */
+  int64_t deadline = limited ? now_ms() + timeout_ms : 0;
+  /* a deadline puts the child in its own group, so it reaches `sh -c` pipelines and other
+     grandchildren; without one the child stays in ours (terminal job control works as usual) */
+  int64_t sp = ec_spawn_ex(has_in ? 2 : 0, out_mode ? 2 : 0, err_mode ? 2 : 0, (flags & (SPAWN_NEW_SESSION | SPAWN_CLEAR_ENV | SPAWN_CWD)) | (limited ? SPAWN_NEW_GROUP : 0), argc, envc);
+  if (sp < 0) return sp; /* out = the failed step (ec_spawn_ex) */
+  pid_t pid = (pid_t)sp;
+  int ip = -1, op = -1, ep = -1;
+  if (out_len >= 12) {
+    ip = (int)le32_at(out_p);
+    op = (int)le32_at(out_p + 4);
+    ep = (int)le32_at(out_p + 8);
+  }
+  if (limited) setpgid(pid, pid); /* also here, so the group exists whichever runs first */
+  size_t soff = 0;
+  if (ip >= 0) {
+    int fl = fcntl(ip, F_GETFL);
+    if (fl >= 0) fcntl(ip, F_SETFL, fl | O_NONBLOCK);
+    if (slen == 0) close_fd(&ip); /* nothing to feed: the child sees end of input at once */
+  }
+  int status = 0, reaped = 0, stage = 0; /* stage: 0 running, 1 TERM sent, 2 KILL sent */
+  int64_t err = 0;
+  out_len = 0;
+  out_put("\0\0\0\0\0\0\0\0", 8);
+  unsigned char *eb = NULL;
+  size_t elen = 0, ecap = 0;
+  char buf[65536];
+  for (;;) {
+    struct pollfd pf[3];
+    nfds_t n = 0;
+    if (op >= 0) { pf[n].fd = op; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
+    if (ep >= 0) { pf[n].fd = ep; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
+    if (ip >= 0) { pf[n].fd = ip; pf[n].events = POLLOUT; pf[n].revents = 0; n++; }
+    if (n == 0 && !limited) break; /* all pipes closed: the blocking reap below */
+    if (n == 0) {                   /* the child closed its pipes; it may still be running */
+      pid_t w = waitpid(pid, &status, WNOHANG);
+      if (w == pid) { reaped = 1; break; }
+      if (w < 0 && errno != EINTR) { err = fail(); break; }
+    }
+    int wait_ms = -1;
+    if (limited) {
+      int64_t now = now_ms(), left = deadline - now;
+      if (left <= 0) {
+        if (stage == 2) break; /* give up on the pipes; the child got SIGKILL */
+        int sig = stage == 0 ? SIGTERM : SIGKILL;
+        if (kill(-pid, sig) != 0) kill(pid, sig);
+        stage++;
+        deadline = now + EC_RUN_GRACE_MS;
+        continue;
+      }
+      int64_t cap = n == 0 ? 10 : 1000000; /* without pipes, poll the child every 10 ms */
+      wait_ms = (int)(left < cap ? left : cap);
+    }
+    if (n == 0) {
+      if (poll(pf, 0, wait_ms) < 0 && errno != EINTR) { err = fail(); break; }
+      continue;
+    }
+    if (poll(pf, n, wait_ms) < 0) {
+      if (errno == EINTR) continue;
+      err = fail();
+      break;
+    }
+    for (nfds_t i = 0; i < n; i++) {
+      if (!pf[i].revents) continue;
+      if (pf[i].fd == ip) { /* the child's stdin: feed what is left; done or closed by it: close ours */
+        size_t chunk = slen - soff < sizeof buf ? slen - soff : sizeof buf;
+        ssize_t w = write(ip, sdata + soff, chunk);
+        if (w < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+        if (w < 0) { close_fd(&ip); continue; } /* EPIPE: it stopped reading; its exit status says why */
+        soff += (size_t)w;
+        if (soff >= slen) close_fd(&ip);
+        continue;
+      }
+      ssize_t r = read(pf[i].fd, buf, sizeof buf);
+      if (r < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+      int *fd = pf[i].fd == op ? &op : &ep;
+      if (r <= 0) { close_fd(fd); continue; }
+      if (fd == &op) {
+        out_put(buf, (size_t)r);
+      } else {
+        reserve(&eb, &ecap, elen + (size_t)r);
+        memcpy(eb + elen, buf, (size_t)r);
+        elen += (size_t)r;
+      }
+    }
+  }
+  close_fd(&ip);
+  close_fd(&op);
+  close_fd(&ep);
+  if (!reaped) {
+    if (err && (!limited || kill(-pid, SIGKILL) != 0)) kill(pid, SIGKILL);
+    pid_t w;
+    while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {}
+    if (w < 0 && !err) err = fail();
+  }
+  if (err) {
+    free(eb);
+    return err;
+  }
+  uint64_t olen = (uint64_t)(out_len - 8);
+  for (int i = 0; i < 8; i++) out_p[i] = (unsigned char)(olen >> (8 * i));
+  out_put(eb, elen);
+  free(eb);
+  if (stage > 0) return EC_RUN_TIMEOUT;
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+/* Run argv = in[0..] (searched on PATH); contract in ABI.md "Running a program".
+   out_mode / err_mode: 0 inherit, 1 capture. timeout_ms > 0: SIGTERM the child's process
+   group at the deadline, SIGKILL after EC_RUN_GRACE_MS. Returns the exit code, 128+signal,
+   EC_RUN_TIMEOUT, or -errno. out = 8-byte little-endian stdout length, stdout, stderr. */
+EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms)) {
+  if (in_len == 0 || out_mode < 0 || out_mode > 1 || err_mode < 0 || err_mode > 1) return -EINVAL;
+  int argc = 0;
+  while (arg(argc)) argc++;
+  int64_t r = run_impl(out_mode, err_mode, timeout_ms, 0, argc, 0, 0, NULL, 0);
+  if (r < 0) out_len = 0;
+  return r;
+}
+
+/* ec_run with the options of ec_spawn_ex: flags 1 new session, 4 the environment is only the given
+   entries, 8 a working directory, 16 the child's stdin is the data at the end of `in` (else it is ours).
+   `in` = argc argument strings, envc `NAME=value` strings, the directory when flag 8, each followed by
+   NUL, then (flag 16) the stdin bytes to the end. On a failure to start: `-errno` and out = the step
+   (ec_spawn_ex); otherwise as ec_run. A child that does not read all its input, or exits first, is not
+   an error: its exit status is the result. */
+EC_FN(int64_t, ec_run_ex, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms, int32_t flags, int32_t argc, int32_t envc)) {
+  out_len = 0;
+  if (out_mode < 0 || out_mode > 1 || err_mode < 0 || err_mode > 1 || argc < 1 || envc < 0) return -EINVAL;
+  if (flags < 0 || (flags & ~(SPAWN_NEW_SESSION | SPAWN_CLEAR_ENV | SPAWN_CWD | 16))) return -EINVAL;
+  int nstr = argc + envc + ((flags & SPAWN_CWD) ? 1 : 0);
+  size_t pos = 0;
+  for (int k = 0; k < nstr; k++) { /* past the NUL that ends each string */
+    while (pos < in_len && in_p[pos]) pos++;
+    if (pos >= in_len) return -EINVAL;
+    pos++;
+  }
+  size_t slen = (flags & 16) ? in_len - pos : 0;
+  if (!(flags & 16) && pos != in_len) return -EINVAL;
+  unsigned char *data = NULL;
+  if (slen) {
+    data = malloc(slen);
+    if (!data) return -ENOMEM;
+    memcpy(data, in_p + pos, slen);
+  }
+  in_len = pos - 1; /* the strings as ec_spawn_ex takes them: separated, none after the last */
+  in_p[in_len] = 0;
+  int64_t r = run_impl(out_mode, err_mode, timeout_ms, flags, argc, envc, (flags & 16) != 0, data, slen);
+  free(data);
+  return r;
+}
+
+/* setsid(2): this process leads a new session and group; the new id. */
+EC_FN(int64_t, ec_setsid, (void)) {
+  pid_t r = setsid();
+  return r < 0 ? fail() : (int64_t)r;
+}
+
+/* setpgid(2): process pid (0: this one) joins group pgid (0: its own pid). */
+EC_FN(int64_t, ec_setpgid, (int32_t pid, int32_t pgid)) { return setpgid((pid_t)pid, (pid_t)pgid) == 0 ? 0 : fail(); }
+
+/* getpgid(2): the group of pid (0: this process). */
+EC_FN(int64_t, ec_getpgid, (int32_t pid)) {
+  pid_t r = getpgid((pid_t)pid);
+  return r < 0 ? fail() : (int64_t)r;
 }
 
 /* waitpid(pid) (pid -1: any child). 0..255 exit code, 256 + Eider signal number if a signal

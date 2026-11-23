@@ -1,0 +1,60 @@
+// std/serial skip_none: an Option field that is None is left out (not written as null), per format;
+// reading an absent field into an Option gives None, so the two directions match (#242)
+import std.bytes
+import std.io
+import std.serial
+
+@[derive(Serialize, Deserialize)]
+type Plain = { name: String, initrd: Option[String] }
+
+@[derive(Serialize, Deserialize)]
+type Boot = {
+    kernel: String,
+    @[serial(skip_none)] initrd: Option[String],
+    @[serial(skip_none)] mac: Option[String],
+    cmdline: Option[String],
+}
+
+@[derive(Serialize, Deserialize)]
+type OnlyJson = {
+    a: i64,
+    @[json(skip_none)] b: Option[i64],
+}
+
+fn show_keys(v: serial.Value) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    match v {
+        serial.VMap(es) => {
+            for i in 0..es.len() {
+                if i > 0 { o.push(44) }
+                bytes.append(inout o, es[i].key.copy())
+            }
+        }
+        _ => bytes.append(inout o, "not a map".bytes())
+    }
+    o
+}
+
+fn keys_of[T: serial.Serialize](x: T) -> List[u8] {
+    match serial.to_value(x) {
+        Ok(v) => show_keys(v)
+        Err(e) => "error".bytes()
+    }
+}
+
+fn main() uses io {
+    // without the attribute a None is written (as null)
+    io.outln(keys_of(Plain(String.from("p"), None)))
+    // with it, only the fields that are set
+    io.outln(keys_of(Boot(String.from("k"), None, None, None)))
+    io.outln(keys_of(Boot(String.from("k"), Some(String.from("i")), None, None)))
+    io.outln(keys_of(Boot(String.from("k"), Some(String.from("i")), Some(String.from("m")), Some(String.from("c")))))
+    // the attribute is per format: `json(skip_none)` leaves a None out of json, not out of the neutral value
+    io.outln(keys_of(OnlyJson(1, None)))
+    // reading back: the absent fields are None
+    let v = serial.to_value(Boot(String.from("k"), Some(String.from("i")), None, None)).unwrap()
+    let back: Boot = serial.from_value[Boot](v).unwrap()
+    print(back.initrd.is_some())
+    print(back.mac.is_none())
+    print(back.cmdline.is_none())
+}

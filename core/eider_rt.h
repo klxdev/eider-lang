@@ -52,6 +52,8 @@ void ei_set_file(const char *file);
 void ei_set_files(const char *const *files, int32_t n);
 /* This thread's test hook: traps longjmp(*jb, 1) instead of exiting. NULL clears it. */
 void ei_set_trap_jmp(jmp_buf *jb);
+/* ei_trap whose message is the data of a fresh String the trap owns and frees (a message built for the trap). */
+_Noreturn void ei_trap_owned(char *msg, int32_t line);
 
 static inline uint64_t ei_idx(uint64_t i, uint64_t n, int32_t line) {
   if (i >= n) ei_trap("index out of bounds", line);
@@ -674,6 +676,13 @@ void ei_main_error_u(uint64_t v);
 /* The test driver: print `test <name> ... `, run fn, print `ok`; a trap inside prints FAILED
    and its message (ei_trap) and returns here. Returns 1 when the test failed, else 0. */
 int32_t ei_test(const char *name, void (*fn)(void));
+/* In a test: an `assert` in the test's own body that failed (prints FAILED and the message as a trap
+   does, and returns: the test then returns through its defers); `skip(reason)` in the test's own body
+   (returns; the test is reported `skipped (reason)`); `skip` from a function the test called (leaves like
+   a trap, no defers). A skip is not a failure unless EIDER_TEST_STRICT is set. */
+void ei_test_fail(const char *msg, int32_t line);
+void ei_test_skip(const char *reason);
+_Noreturn void ei_test_skip_now(const char *reason);
 /* After the tests: `\n<total> tests, <failed> failed`, the leak report when none failed (with
    EI_RT_COUNT_ALLOCS); the exit code (1 if any failed). */
 int32_t ei_tests_done(int32_t total, int32_t failed);

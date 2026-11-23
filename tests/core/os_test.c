@@ -17,9 +17,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -42,6 +44,14 @@ int64_t ec_fd_truncate(int32_t fd, int64_t len);
 int64_t ec_fd_stat(int32_t fd);
 int64_t ec_stat(int32_t follow);
 int64_t ec_fd_chmod(int32_t fd, int32_t mode);
+int64_t ec_statvfs(void);
+int64_t ec_run_ex(int32_t out_mode, int32_t err_mode, int64_t timeout_ms, int32_t flags, int32_t argc, int32_t envc);
+int64_t ec_spawn_ex(int32_t in_spec, int32_t out_spec, int32_t err_spec, int32_t flags, int32_t argc, int32_t envc);
+int64_t ec_setsid(void);
+int64_t ec_setpgid(int32_t pid, int32_t pgid);
+int64_t ec_getpgid(int32_t pid);
+int64_t ec_chmod(int32_t mode);
+int64_t ec_write_file_mode(int32_t append, int32_t mode);
 int64_t ec_fd_lock(int32_t fd, int32_t op);
 int64_t ec_fd_nonblock(int32_t fd, int32_t on);
 int64_t ec_fd_dup(int32_t fd);
@@ -265,10 +275,11 @@ static void test_fd(void) {
   EQI(ec_fd_seek((int32_t)fd, 0, 7), -EINVAL);
   /* stat: size, kind, mode, mtime */
   EQI(ec_fd_stat((int32_t)fd), 0);
-  EQI(ec_out_len(), 32);
+  EQI(ec_out_len(), 40);
   EQI(out_u64(0), 11);
   EQI(out_u64(8), 1);
   EQI(out_u64(16), 0640); /* the umask (022) leaves 0640 alone */
+  CHECK(out_u64(32) > 0 && out_u64(32) % 512 == 0); /* 11 bytes written: a block or more is allocated */
   int64_t now = ec_time_wall_ns(), mt = (int64_t)out_u64(24);
   CHECK(mt > now - (int64_t)60 * 1000000000 && mt <= now + 1000000000);
   EQI(ec_fd_chmod((int32_t)fd, 0600), 0);
@@ -504,6 +515,372 @@ static void echo_round(int family) {
   ec_fd_close((int32_t)cs);
   ec_fd_close((int32_t)ls);
   ec_fd_close((int32_t)p);
+}
+
+/* the permission bits of path (stat(2)), or -1 */
+static int64_t mode_at(const char *path) {
+  struct stat st;
+  return stat(path, &st) == 0 ? (int64_t)(st.st_mode & 07777) : -1;
+}
+
+/* the whole file at path in buf (NUL-terminated) */
+static size_t slurp(const char *path, char *buf, size_t cap) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  size_t n = fread(buf, 1, cap - 1, f);
+  fclose(f);
+  buf[n] = 0;
+  return n;
+}
+
+/* in = path NUL data */
+static void set_path_data(const char *path, const char *data) {
+  ec_in_clear();
+  push_str(path);
+  ec_in_push(0);
+  push_str(data);
+}
+
+static void test_chmod_and_write_mode(void) {
+  char path[4200], buf[64];
+  path_in(path, sizeof path, "wm.txt");
+  /* created with the mode (umask 022 only clears group and other write bits) */
+  set_path_data(path, "secret");
+  EQI(ec_write_file_mode(0, 0600), 0);
+  EQI(mode_at(path), 0600);
+  CHECK(slurp(path, buf, sizeof buf) == 6 && !strcmp(buf, "secret"));
+  /* an existing file keeps its own mode and is truncated and rewritten */
+  CHECK(chmod(path, 0640) == 0);
+  set_path_data(path, "x");
+  EQI(ec_write_file_mode(0, 0600), 0);
+  EQI(mode_at(path), 0640);
+  CHECK(slurp(path, buf, sizeof buf) == 1 && !strcmp(buf, "x"));
+  /* append: added after the old content, created with the mode when missing */
+  set_path_data(path, "yz");
+  EQI(ec_write_file_mode(1, 0600), 0);
+  CHECK(slurp(path, buf, sizeof buf) == 3 && !strcmp(buf, "xyz"));
+  unlink(path);
+  set_path_data(path, "new");
+  EQI(ec_write_file_mode(1, 0700), 0);
+  EQI(mode_at(path), 0700);
+  /* an empty data part makes an empty file; a bad mode, a directory and a missing parent fail */
+  set_path_data(path, "");
+  EQI(ec_write_file_mode(0, 0644), 0);
+  EQI(mode_at(path), 0700);
+  CHECK(slurp(path, buf, sizeof buf) == 0);
+  set_path_data(path, "q");
+  EQI(ec_write_file_mode(0, 010000), -EINVAL);
+  EQI(ec_write_file_mode(0, -1), -EINVAL);
+  set_path_data(tmpdir, "q");
+  EQI(ec_write_file_mode(0, 0600), -EISDIR);
+  set_path_data("/nonexistent/eider/x", "q");
+  EQI(ec_write_file_mode(0, 0600), -ENOENT);
+  /* chmod by path, including a file nobody can read (fchmod through a read-only open would fail) */
+  set_str(path);
+  EQI(ec_chmod(0755), 0);
+  EQI(mode_at(path), 0755);
+  EQI(ec_chmod(0200), 0);
+  EQI(mode_at(path), 0200);
+  EQI(ec_chmod(04755), 0);
+  EQI(mode_at(path), 04755);
+  EQI(ec_chmod(010000), -EINVAL);
+  EQI(ec_chmod(-1), -EINVAL);
+  EQI(mode_at(path), 04755); /* the bad calls changed nothing */
+  set_str("/nonexistent/eider");
+  EQI(ec_chmod(0600), -ENOENT);
+  unlink(path);
+}
+
+/* in = the NULL-terminated strings, NUL-separated (none after the last, as the ABI says) */
+static void strs(const char *first, ...) {
+  va_list ap;
+  va_start(ap, first);
+  ec_in_clear();
+  for (const char *s = first; s; s = va_arg(ap, const char *)) {
+    if (s != first) ec_in_push(0);
+    push_str(s);
+  }
+  va_end(ap);
+}
+
+static size_t file_text(const char *path, char *buf, size_t cap) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  size_t n = fread(buf, 1, cap - 1, f);
+  fclose(f);
+  buf[n] = 0;
+  return n;
+}
+
+/* a spec: mode, and a descriptor for mode 5 */
+#define SPEC(m, fd) ((m) | ((fd) << 8))
+
+static void test_spawn_ex(void) {
+  char log[4200], inp[4200], buf[256], dir[4200];
+  path_in(log, sizeof log, "console.log");
+  path_in(inp, sizeof inp, "input.txt");
+  path_in(dir, sizeof dir, "cwd");
+  CHECK(mkdir(dir, 0755) == 0);
+  /* stdout and stderr to one file (2>&1), in order; the child has no shell wrapper around it */
+  strs("sh", "-c", "echo out1; echo err1 >&2; echo out2", log, NULL);
+  int64_t pid = ec_spawn_ex(0, SPEC(3, 0), 6, 0, 3, 0);
+  CHECK(pid > 0);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  CHECK(file_text(log, buf, sizeof buf) > 0 && !strcmp(buf, "out1\nerr1\nout2\n"));
+  /* append keeps what is there; a file mode truncates */
+  strs("echo", "more", log, NULL);
+  pid = ec_spawn_ex(0, SPEC(4, 0), 0, 0, 2, 0);
+  CHECK(pid > 0);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  CHECK(file_text(log, buf, sizeof buf) > 0 && !strcmp(buf, "out1\nerr1\nout2\nmore\n"));
+  strs("echo", "fresh", log, NULL);
+  pid = ec_spawn_ex(0, SPEC(3, 0), 0, 0, 2, 0);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  CHECK(file_text(log, buf, sizeof buf) > 0 && !strcmp(buf, "fresh\n"));
+  /* stdin from a file, stdout a pipe */
+  {
+    FILE *f = fopen(inp, "wb");
+    CHECK(f != NULL);
+    fputs("from a file\n", f);
+    fclose(f);
+  }
+  strs("cat", inp, NULL);
+  pid = ec_spawn_ex(SPEC(3, 0), 2, 0, 0, 1, 0);
+  CHECK(pid > 0);
+  int out = out_i32(4);
+  CHECK(out >= 3);
+  EQI(ec_read_fd(out, 64), 12);
+  CHECK(out_is("from a file\n"));
+  ec_fd_close(out);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  /* a descriptor of ours (it stays open and usable), and the same one for stderr */
+  set_str(log);
+  int64_t lf = ec_fd_open(1 | 4 | 16, 0644);
+  CHECK(lf >= 3);
+  strs("sh", "-c", "echo a; echo b >&2", NULL);
+  pid = ec_spawn_ex(0, SPEC(5, (int)lf), SPEC(5, (int)lf), 0, 3, 0);
+  CHECK(pid > 0);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  set_str("tail\n");
+  EQI(ec_fd_write((int32_t)lf), 5);
+  ec_fd_close((int32_t)lf);
+  CHECK(file_text(log, buf, sizeof buf) > 0 && !strcmp(buf, "a\nb\ntail\n"));
+  strs("echo", "x", NULL);
+  EQI(ec_spawn_ex(0, SPEC(5, 999), 0, 0, 2, 0), -EBADF);
+  EQI(out_i32(0), 11); /* stage: the descriptor of stream 1 */
+  /* environment: added, replacing, and replaced entirely */
+  setenv("EIDER_SPAWN_KEEP", "kept", 1);
+  setenv("EIDER_SPAWN_OLD", "old", 1);
+  strs("sh", "-c", "echo $EIDER_SPAWN_KEEP $EIDER_SPAWN_OLD $EIDER_SPAWN_NEW", "EIDER_SPAWN_OLD=replaced", "EIDER_SPAWN_NEW=added", NULL);
+  pid = ec_spawn_ex(0, 2, 0, 0, 3, 2);
+  CHECK(pid > 0);
+  out = out_i32(4);
+  EQI(ec_read_fd(out, 64), 20);
+  CHECK(out_is("kept replaced added\n"));
+  ec_fd_close(out);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  strs("env", "ONLY=1", NULL);
+  pid = ec_spawn_ex(0, 2, 0, 4, 1, 1);
+  CHECK(pid > 0); /* `env` found on the default path though PATH is not in its environment */
+  out = out_i32(4);
+  EQI(ec_read_fd(out, 64), 7);
+  CHECK(out_is("ONLY=1\n"));
+  ec_fd_close(out);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  strs("env", "NOEQUALS", NULL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 1, 1), -EINVAL);
+  strs("env", "=x", NULL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 1, 1), -EINVAL);
+  /* working directory */
+  strs("pwd", dir, NULL);
+  pid = ec_spawn_ex(0, 2, 0, 8, 1, 0);
+  CHECK(pid > 0);
+  out = out_i32(4);
+  CHECK(ec_read_fd(out, 4096) > 0);
+  {
+    char want[4300];
+    snprintf(want, sizeof want, "%s/cwd\n", tmpdir);
+    char *real = realpath(dir, NULL);
+    CHECK(real != NULL);
+    snprintf(want, sizeof want, "%s\n", real);
+    free(real);
+    CHECK(out_is(want));
+  }
+  ec_fd_close(out);
+  EQI(ec_wait((int32_t)pid, 0), 0);
+  strs("pwd", "/nonexistent/eider", NULL);
+  EQI(ec_spawn_ex(0, 0, 0, 8, 1, 0), -ENOENT);
+  EQI(out_i32(0), 20);
+  /* a failing step is the result with its stage, the child reaped; so is a missing program */
+  strs("echo", "x", "/nonexistent/eider/out", NULL);
+  EQI(ec_spawn_ex(0, SPEC(3, 0), 0, 0, 2, 0), -ENOENT);
+  EQI(out_i32(0), 11);
+  strs("echo", "x", "/nonexistent/eider/err", NULL);
+  EQI(ec_spawn_ex(0, 0, SPEC(4, 0), 0, 2, 0), -ENOENT);
+  EQI(out_i32(0), 12);
+  strs("no-such-program-eider", NULL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 1, 0), -ENOENT);
+  EQI(out_i32(0), 23);
+  CHECK(waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD); /* nothing left to reap */
+  /* a bad spec, flags or counts */
+  strs("echo", NULL);
+  EQI(ec_spawn_ex(4, 0, 0, 0, 1, 0), -EINVAL); /* stdin cannot append */
+  EQI(ec_spawn_ex(0, 6, 0, 0, 1, 0), -EINVAL); /* only stderr can be stdout */
+  EQI(ec_spawn_ex(0, 0, 7, 0, 1, 0), -EINVAL);
+  EQI(ec_spawn_ex(0, 0, 0, 16, 1, 0), -EINVAL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 0, 0), -EINVAL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 2, 0), -EINVAL); /* more strings promised than given */
+  EQI(ec_spawn_ex(0, 0, 0, 0, 1, 1), -EINVAL);
+  EQI(ec_spawn_ex(-1, 0, 0, 0, 1, 0), -EINVAL);
+  /* a new session, a new group: read the ids from the child's own /proc/self/stat (fields after
+     "(comm) ": state ppid pgrp session) */
+  for (int flag = 1; flag <= 2; flag++) {
+    strs("cat", "/proc/self/stat", NULL);
+    pid = ec_spawn_ex(0, 2, 0, flag, 2, 0);
+    CHECK(pid > 0);
+    out = out_i32(4);
+    CHECK(ec_read_fd(out, 4096) > 0);
+    unsigned char o[512];
+    take(o, sizeof o);
+    char *rp = strrchr((char *)o, ')');
+    CHECK(rp != NULL);
+    int pp = 0, pg = 0, se = 0;
+    char state;
+    CHECK(rp && sscanf(rp + 2, "%c %d %d %d", &state, &pp, &pg, &se) == 4);
+    CHECK(pg == (int)pid);                                     /* its own group either way */
+    CHECK(flag == 1 ? se == (int)pid : se == (int)getsid(0)); /* a new session, or ours */
+    ec_fd_close(out);
+    EQI(ec_wait((int32_t)pid, 0), 0);
+  }
+  EQI(ec_getpgid(0), (int64_t)getpgid(0));
+  EQI(ec_getpgid(-5), -ESRCH);
+  /* the caller's own group helpers, in a forked process so ours is left alone */
+  pid_t f = fork();
+  if (f == 0) {
+    int64_t sid = ec_setsid();
+    _exit(sid == (int64_t)getpid() && ec_getpgid(0) == sid && ec_setsid() == -EPERM ? 0 : 1);
+  }
+  int st;
+  CHECK(waitpid(f, &st, 0) == f && WIFEXITED(st) && WEXITSTATUS(st) == 0);
+  f = fork();
+  if (f == 0) {
+    _exit(ec_setpgid(0, 0) == 0 && ec_getpgid(0) == (int64_t)getpid() ? 0 : 1);
+  }
+  CHECK(waitpid(f, &st, 0) == f && WIFEXITED(st) && WEXITSTATUS(st) == 0);
+  unlink(log);
+  unlink(inp);
+  rmdir(dir);
+}
+
+static void test_sparse_and_statvfs(void) {
+  char path[4200];
+  path_in(path, sizeof path, "sparse.img");
+  set_str(path);
+  int64_t fd = ec_fd_open(1 | 4 | 16, 0600);
+  CHECK(fd >= 3);
+  EQI(ec_fd_truncate((int32_t)fd, 1 << 20), 0); /* a megabyte that was never written */
+  EQI(ec_fd_stat((int32_t)fd), 0);
+  EQI(out_u64(0), 1 << 20);
+  CHECK(out_u64(32) < (uint64_t)1 << 20); /* sparse: far less than the size is allocated */
+  set_data("x");
+  EQI(ec_fd_pwrite((int32_t)fd, 0), 1);
+  EQI(ec_fd_stat((int32_t)fd), 0);
+  CHECK(out_u64(32) >= 512 && out_u64(32) % 512 == 0);
+  ec_fd_close((int32_t)fd);
+  unlink(path);
+  /* statvfs of the temporary directory */
+  set_str(tmpdir);
+  EQI(ec_statvfs(), 0);
+  EQI(ec_out_len(), 56);
+  uint64_t fr = out_u64(0), blocks = out_u64(8), bfree = out_u64(16), bavail = out_u64(24);
+  uint64_t files = out_u64(32), ffree = out_u64(40), favail = out_u64(48);
+  CHECK(fr >= 512 && (fr & (fr - 1)) == 0);
+  CHECK(blocks > 0 && bfree <= blocks && bavail <= bfree);
+  CHECK(ffree <= files && favail <= ffree);
+  set_str("/nonexistent/eider");
+  EQI(ec_statvfs(), -ENOENT);
+}
+
+/* in = the strings, each followed by NUL (ec_run_ex's form), then the stdin bytes */
+static void run_in(const char *const *strv, int n, const char *data, size_t dlen) {
+  ec_in_clear();
+  for (int i = 0; i < n; i++) {
+    push_str(strv[i]);
+    ec_in_push(0);
+  }
+  for (size_t i = 0; i < dlen; i++) ec_in_push((unsigned char)data[i]);
+}
+
+/* the captured stdout of the last ec_run_ex: n bytes equal to want */
+static int run_stdout_is(const char *want, size_t n) {
+  size_t len = (size_t)out_u64(0);
+  if (len != n || (size_t)ec_out_len() < 8 + n) return 0;
+  for (size_t i = 0; i < n; i++)
+    if (ec_out_byte((int64_t)(8 + i)) != (unsigned char)want[i]) return 0;
+  return 1;
+}
+
+static void test_run_ex(void) {
+  /* stdin to cat, captured */
+  const char *cat[] = {"cat"};
+  run_in(cat, 1, "hello\nthere\0nul", 15);
+  EQI(ec_run_ex(1, 0, 0, 16, 1, 0), 0);
+  CHECK(run_stdout_is("hello\nthere\0nul", 15));
+  /* more than a pipe holds in both directions at once: the feed and the drain must interleave */
+  size_t big = 3 * 1024 * 1024;
+  char *src = malloc(big);
+  CHECK(src != NULL);
+  for (size_t i = 0; i < big; i++) src[i] = (char)(i * 31 + 7);
+  run_in(cat, 1, src, big);
+  EQI(ec_run_ex(1, 0, 20000, 16, 1, 0), 0);
+  CHECK(run_stdout_is(src, big));
+  free(src);
+  /* empty input: end of input at once, so cat ends */
+  run_in(cat, 1, "", 0);
+  EQI(ec_run_ex(1, 0, 5000, 16, 1, 0), 0);
+  CHECK(run_stdout_is("", 0));
+  /* a child that never reads its input is not an error: its status is the result */
+  const char *tr[] = {"true"};
+  src = malloc(big);
+  CHECK(src != NULL);
+  memset(src, 'x', big);
+  run_in(tr, 1, src, big);
+  EQI(ec_run_ex(1, 0, 20000, 16, 1, 0), 0);
+  free(src);
+  /* no stdin flag: the data part must be empty; with it, the child's stdin is the data */
+  run_in(cat, 1, "x", 1);
+  EQI(ec_run_ex(1, 0, 0, 0, 1, 0), -EINVAL);
+  /* environment and directory together */
+  char *real = realpath(tmpdir, NULL);
+  CHECK(real != NULL);
+  const char *envdir[] = {"sh", "-c", "echo $EIDER_RUN_X; pwd", "EIDER_RUN_X=seen", tmpdir};
+  run_in(envdir, 5, "", 0);
+  EQI(ec_run_ex(1, 0, 0, 8, 3, 1), 0);
+  {
+    char want[4400];
+    snprintf(want, sizeof want, "seen\n%s\n", real);
+    CHECK(run_stdout_is(want, strlen(want)));
+  }
+  free(real);
+  /* the directory counted in the strings but the flag missing: more strings than promised */
+  run_in(envdir, 5, "", 0);
+  EQI(ec_run_ex(1, 0, 0, 0, 3, 1), -EINVAL);
+  /* a deadline still applies while input is being fed */
+  const char *slp[] = {"sleep", "30"};
+  run_in(slp, 2, "ignored", 7);
+  EQI(ec_run_ex(1, 1, 200, 16, 2, 0), 256);
+  /* a failing start: the step in out; bad flags */
+  const char *bad[] = {"pwd", "/nonexistent/eider"};
+  run_in(bad, 2, "", 0);
+  EQI(ec_run_ex(1, 0, 0, 8, 1, 0), -ENOENT);
+  EQI(out_i32(0), 20);
+  const char *no[] = {"no-such-program-eider"};
+  run_in(no, 1, "", 0);
+  EQI(ec_run_ex(1, 0, 0, 0, 1, 0), -ENOENT);
+  EQI(ec_run_ex(1, 0, 0, 2, 1, 0), -EINVAL);
+  EQI(ec_run_ex(2, 0, 0, 0, 1, 0), -EINVAL);
+  EQI(ec_run_ex(1, 0, 0, 0, 0, 0), -EINVAL);
+  CHECK(waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD); /* every child was reaped */
 }
 
 static void test_tcp(void) {
@@ -1181,6 +1558,10 @@ int main(int argc, char **argv) {
   }
   umask(022);
   test_fd();
+  test_chmod_and_write_mode();
+  test_sparse_and_statvfs();
+  test_spawn_ex();
+  test_run_ex();
   test_tcp();
   test_udp();
   test_unix();

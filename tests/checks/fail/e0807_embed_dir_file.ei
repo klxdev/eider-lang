@@ -1,0 +1,3 @@
+// expect: E0807 2:30
+const X: List[u8] = comptime embed_dir("e0807_embed_dir_str.ei")
+fn main() uses io { print(X.len()) }

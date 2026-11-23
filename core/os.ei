@@ -30,6 +30,9 @@ extern "c" fn ec_fd_stat(fd: i32) -> i64
 extern "c" fn ec_stat(follow: i32) -> i64
 extern "c" fn ec_touch() -> i64
 extern "c" fn ec_fd_chmod(fd: i32, mode: i32) -> i64
+extern "c" fn ec_chmod(mode: i32) -> i64
+extern "c" fn ec_statvfs() -> i64
+extern "c" fn ec_write_file_mode(append: i32, mode: i32) -> i64
 extern "c" fn ec_fd_lock(fd: i32, op: i32) -> i64
 extern "c" fn ec_fd_nonblock(fd: i32, on: i32) -> i64
 extern "c" fn ec_fd_dup(fd: i32) -> i64
@@ -68,6 +71,11 @@ extern "c" fn ec_signal_set(sig: i32, how: i32) -> i64
 extern "c" fn ec_signal_mask(sig: i32, block: i32) -> i64
 extern "c" fn ec_random(n: i64, nonblock: i32) -> i64
 extern "c" fn ec_spawn(in_mode: i32, out_mode: i32, err_mode: i32) -> i64
+extern "c" fn ec_spawn_ex(in_spec: i32, out_spec: i32, err_spec: i32, flags: i32, argc: i32, envc: i32) -> i64
+extern "c" fn ec_setsid() -> i64
+extern "c" fn ec_run_ex(out_mode: i32, err_mode: i32, timeout_ms: i64, flags: i32, argc: i32, envc: i32) -> i64
+extern "c" fn ec_setpgid(pid: i32, pgid: i32) -> i64
+extern "c" fn ec_getpgid(pid: i32) -> i64
 extern "c" fn ec_wait(pid: i32, nohang: i32) -> i64
 extern "c" fn ec_kill(pid: i32, sig: i32) -> i64
 extern "c" fn ec_getpid() -> i64
@@ -128,6 +136,18 @@ pub fn stat(follow: bool) -> i64 uses fs, ffi {
 }
 pub fn touch() -> i64 uses fs, ffi { unsafe { ec_touch() } }
 pub fn fd_chmod(fd: i32, mode: i32) -> i64 uses fs, ffi { unsafe { ec_fd_chmod(fd, mode) } }
+/// statvfs(3) of the path in `in[0]`: seven u64 in `out` (core/ABI.md "Files").
+pub fn statvfs() -> i64 uses fs, ffi { unsafe { ec_statvfs() } }
+/// chmod(2) on the path in `in[0]`.
+pub fn chmod(mode: i32) -> i64 uses fs, ffi { unsafe { ec_chmod(mode) } }
+/// ec_write_file with the permission bits of a created file (path NUL data in the input buffer).
+pub fn write_file_mode(append: bool, mode: i32) -> i64 uses fs, ffi {
+    let a = if append { 1 } else { 0 }
+    unsafe { ec_write_file_mode(a, mode) }
+}
+/// Close a descriptor the caller holds, with no capability of its own: for a `Drop` (which can't
+/// declare any) that releases a handle made by a function that did (std/fs's `Lock`).
+pub fn fd_release(fd: i32) uses ffi { unsafe { ec_fd_close(fd) } }
 pub fn fd_lock(fd: i32, op: i32) -> i64 uses fs, ffi { unsafe { ec_fd_lock(fd, op) } }
 pub fn fd_nonblock(fd: i32, on: bool) -> i64 uses io, ffi {
     let o = flag(on)
@@ -201,6 +221,15 @@ pub fn random(n: i64, nonblock: bool) -> i64 uses io, ffi {
 
 // processes
 pub fn spawn(in_mode: i32, out_mode: i32, err_mode: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_spawn(in_mode, out_mode, err_mode) } }
+/// ec_spawn_ex (core/ABI.md "Processes"): the argument, environment, directory and file strings are in
+/// the input buffer.
+pub fn spawn_ex(in_spec: i32, out_spec: i32, err_spec: i32, flags: i32, argc: i32, envc: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_spawn_ex(in_spec, out_spec, err_spec, flags, argc, envc) } }
+pub fn setsid() -> i64 uses io, fs, net, ffi { unsafe { ec_setsid() } }
+/// ec_run with environment, directory, session and stdin (core/ABI.md "Running a program"): the
+/// NUL-terminated strings and the stdin bytes are in the input buffer.
+pub fn run_ex(out_mode: i32, err_mode: i32, timeout_ms: i64, flags: i32, argc: i32, envc: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_run_ex(out_mode, err_mode, timeout_ms, flags, argc, envc) } }
+pub fn setpgid(pid: i32, pgid: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_setpgid(pid, pgid) } }
+pub fn getpgid(pid: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_getpgid(pid) } }
 pub fn wait(pid: i32, nohang: bool) -> i64 uses io, fs, net, ffi {
     let n = flag(nohang)
     unsafe { ec_wait(pid, n) }

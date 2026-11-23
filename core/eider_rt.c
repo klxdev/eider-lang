@@ -86,7 +86,9 @@ void ei_set_files(const char *const *files, int32_t n) {
 }
 void ei_set_trap_jmp(jmp_buf *jb) { trap_jmp = jb; }
 
-_Noreturn void ei_trap(const char *msg, int32_t line) {
+/* `owned`: a String's data pointer the trap now owns (a message the program built just for it): freed once
+   the text has been copied or printed, so a contained trap does not leak it. */
+static _Noreturn void trap_impl(const char *msg, int32_t line, void *owned) {
   const char *file = atomic_load(&trap_file);
   if (!file) file = "";
   int32_t f = line > 0 ? line >> 20 : 0;
@@ -104,17 +106,24 @@ _Noreturn void ei_trap(const char *msg, int32_t line) {
     char *m = n >= 0 ? malloc((size_t)n + 1) : NULL;
     if (m) snprintf(m, (size_t)n + 1, "%s (%s:%" PRId32 ")", msg, file, line);
     try_top->msg = m;
+    if (owned) ei_buf_free(owned);
     longjmp(try_top->jb, 1);
   }
   if (trap_jmp) {
     printf("FAILED\n    %s (%s:%" PRId32 ")\n", msg, file, line);
     fflush(stdout);
+    if (owned) ei_buf_free(owned);
     longjmp(*trap_jmp, 1);
   }
   pthread_mutex_lock(&dying);
   fprintf(stderr, "eider: runtime error: %s (%s:%" PRId32 ")\n", msg, file, line);
   exit(101);
 }
+
+_Noreturn void ei_trap(const char *msg, int32_t line) { trap_impl(msg, line, NULL); }
+
+/* ei_trap with a message that is a fresh String's text (docs/compiler.md "C8.93"). */
+_Noreturn void ei_trap_owned(char *msg, int32_t line) { trap_impl(msg, line, msg); }
 
 // ---- allocation
 
@@ -2553,6 +2562,60 @@ void ei_main_error_u(uint64_t v) {
 /* EIDER_TEST_FILTER (`eiderc test --filter NAME`): only the tests whose name contains it run */
 static int32_t ei_tests_filtered = 0;
 
+/* What the running test has done besides trapping: 1 an assert in its own body failed (reported by
+   ei_test_fail; the test returned through its defers), 2 it asked to be skipped. */
+static int ei_test_state = 0;
+static char ei_test_reason[256];
+static int32_t ei_tests_skipped = 0;
+static int ei_tests_unwound = 0; /* a skip from a helper left the test's frames without dropping them */
+
+/* `assert` in a test's own body: the failure is reported as a trap would report it, but the test goes
+   on to return, so its `defer`s and drops run (docs/compiler.md "C8.94"). */
+void ei_test_fail(const char *msg, int32_t line) {
+  const char *file = atomic_load(&trap_file);
+  if (!file) file = "";
+  int32_t f = line > 0 ? line >> 20 : 0;
+  if (f > 0 && f < atomic_load(&trap_nfiles)) {
+    const char *const *files = atomic_load(&trap_files);
+    if (files && files[f]) {
+      file = files[f];
+      line &= 0xFFFFF;
+    }
+  }
+  fflush(stdout);
+  printf("FAILED\n    %s (%s:%" PRId32 ")\n", msg, file, line);
+  fflush(stdout);
+  ei_test_state = 1;
+}
+
+/* `skip(reason)` in a test's own body: the test returns (through its defers) and is reported as skipped. */
+void ei_test_skip(const char *reason) {
+  snprintf(ei_test_reason, sizeof ei_test_reason, "%s", reason);
+  ei_test_state = 2;
+}
+
+/* `skip(reason)` from a function the test called: it can't return for the test, so it leaves the way a
+   trap does (no drops, no defers run) and is still reported as skipped. */
+_Noreturn void ei_test_skip_now(const char *reason) {
+  if (!trap_jmp) ei_trap("skip() outside a test", 0);
+  ei_test_skip(reason);
+  ei_tests_unwound = 1;
+  longjmp(*trap_jmp, 1);
+}
+
+/* The end of a skipped test: `skipped (reason)`, counted; in strict mode (EIDER_TEST_STRICT, `eiderc test
+   --strict`) it is a failure, so a CI machine missing what a test needs says so. Returns 1 if failed. */
+static int32_t ei_test_report_skip(void) {
+  const char *strict = getenv("EIDER_TEST_STRICT");
+  ei_tests_skipped++;
+  if (strict && *strict && strcmp(strict, "0") != 0) {
+    printf("FAILED\n    skipped, and skips are failures here (--strict): %s\n", ei_test_reason);
+    return 1;
+  }
+  printf("skipped (%s)\n", ei_test_reason);
+  return 0;
+}
+
 int32_t ei_test(const char *name, void (*fn)(void)) {
   /* static: a failing test's trap longjmps back here, while ei_test runs */
   static jmp_buf jb;
@@ -2563,10 +2626,13 @@ int32_t ei_test(const char *name, void (*fn)(void)) {
   }
   printf("test %s ... ", name);
   fflush(stdout);
+  ei_test_state = 0;
   ei_set_trap_jmp(&jb);
   if (setjmp(jb) == 0) {
     fn();
     ei_set_trap_jmp(NULL);
+    if (ei_test_state == 1) return 1; /* failed by an assert in its body: already reported */
+    if (ei_test_state == 2) return ei_test_report_skip();
     printf("ok\n");
     return 0;
   }
@@ -2575,16 +2641,16 @@ int32_t ei_test(const char *name, void (*fn)(void)) {
   /* a failed test longjmps past its frames' pops */
   ei_prof_unwind(0);
 #endif
+  if (ei_test_state == 2) return ei_test_report_skip(); /* skipped from a helper */
   return 1;
 }
 
 int32_t ei_tests_done(int32_t total, int32_t failed) {
-  if (ei_tests_filtered) {
-    printf("\n%" PRId32 " tests, %" PRId32 " failed, %" PRId32 " filtered out\n", total - ei_tests_filtered, failed, ei_tests_filtered);
-  } else {
-    printf("\n%" PRId32 " tests, %" PRId32 " failed\n", total, failed);
-  }
-  if (!failed) ei_check_leaks();
+  printf("\n%" PRId32 " tests, %" PRId32 " failed", total - ei_tests_filtered, failed);
+  if (ei_tests_skipped) printf(", %" PRId32 " skipped", ei_tests_skipped);
+  if (ei_tests_filtered) printf(", %" PRId32 " filtered out", ei_tests_filtered);
+  printf("\n");
+  if (!failed && !ei_tests_unwound) ei_check_leaks();
   return failed ? 1 : 0;
 }
 

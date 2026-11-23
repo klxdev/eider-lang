@@ -213,6 +213,10 @@ type W = {
     print: u32, len: u32, now_ms: u32, panic: u32, spawn: u32, main: u32,
     option: u32, result: u32, caps: List[u32], io: u32, clock: u32, threads: u32,
     list: u32, map: u32, boxs: u32, some: u32, none: u32, ok: u32, errv: u32, hm: List[u32],
+    /// `__unwrap_failed(msg, e)`: the prelude's trap for `unwrap` and `expect` on an Err (decision C910)
+    unwrap_failed: u32,
+    /// `skip(reason)` (decision C911): a call is the test runner's skip when no function or local is named `skip`
+    skip: u32,
 }
 
 pub type C = {
@@ -480,6 +484,9 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
     }
     if types.is_int(c.t, expected) && types.is_int(c.t, found) {
         d.help = q("there are no implicit conversions; use an explicit cast: `value as ", ts(c, expected), "`")
+    }
+    if expected != NONE && found != NONE && types.kind(c.t, expected) == types.T_LIST && types.kind(c.t, found) == types.T_ARRAY {
+        d.help = s("`[...]` is a fixed-size array; the List literal is `List[...]` (`List[1, 2, 3]`)")
     }
     if types.is_float(c.t, expected) && types.is_float(c.t, found) {
         d.help = q("f32 and f64 don't mix implicitly; convert with `value as ", ts(c, expected), "`")
@@ -3766,13 +3773,17 @@ fn well_known(inout names: intern.Interner) -> W {
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
         caps, caps[0], caps[1], caps[4], heap[0], heap[1], heap[2],
-        sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm)
+        sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm, 0, 0)
     // the in-place List operations (docs/compiler.md "C8.49"), interned last so no earlier symbol moves
     for x in ["truncate", "extend", "swap", "remove_range", "filled"] { w.hm.push(sym(inout names, x)) }
     // `Map.deterministic()` (decision C805)
     for x in ["deterministic"] { w.hm.push(sym(inout names, x)) }
     // `Task.catch(f)` (decision C803)
     for x in ["catch"] { w.hm.push(sym(inout names, x)) }
+    // `unwrap` and `expect` on an Err (decision C910)
+    w.unwrap_failed = sym(inout names, "__unwrap_failed")
+    // `skip(reason)` in tests (decision C911)
+    w.skip = sym(inout names, "skip")
     w  // well-known
 }
 
@@ -3815,7 +3826,7 @@ fn is_builtin_type(c: C, k: u64) -> bool {
 fn is_builtin_fn(c: C, k: u64) -> bool {
     if resolve.key_pre(k) != 0 { return false }
     let x = resolve.key_sym(k)
-    x == c.w.print || x == c.w.len || x == c.w.now_ms || x == c.w.panic || x == c.w.spawn
+    x == c.w.print || x == c.w.len || x == c.w.now_ms || x == c.w.panic || x == c.w.spawn || x == c.w.unwrap_failed
 }
 
 fn fn_key(c: C, m: u32, n: ast.Node) -> u64 {
@@ -4231,6 +4242,19 @@ fn main_result(c: C, ty: u32) -> bool {
 fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.Diag] {
     let ty = resolve_ty(inout c, it.m, n.c)?
     let vn = ndm(c, it.m, n.d)
+    if n.e == 3 {
+        // `const X: List[u8] = comptime embed("file")` (consteval.ei, "C8.87"): the file's bytes are a
+        // string-table entry; the constant owns no heap memory, and each use makes a list of them
+        let lt = types.list_of(inout c.t, types.U8)
+        if ty != lt { return Err(mismatch(c, vn.line, vn.col, ty, lt)) }
+        let text = c.p.mods[it.m as usize].strs[vn.a as usize].copy()
+        let so = ir.op_str(inout c.ir, text)
+        c.consts.insert(k, c.cdefs.len() as u32)
+        c.cdefs.push(ConstDef(k, it.m, n.b == 1, ty, false, fold.zero(), so, it.node))
+        let bname = kt(c, k)
+        ir.add_const(inout c.ir, bname, ty, so)
+        return Ok(true)
+    }
     if owns(c, ty) { return Err(err("E0504", vn.line, vn.col, s("constants can't own heap memory; build the value in a function instead"))) }
     let mark = ir.open(c.ir)
     let v = expr(inout c, n.d, ty)?
@@ -5386,10 +5410,48 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 c.ir.strs.push(c.p.mods[c.am as usize].strs[(n.b - 1) as usize])
                 msg = c.ir.strs.len() as u32
             }
+            if c.ir.fns[c.ir.cur as usize].is_test {
+                // in a test's own body a failed assert reports and then returns, through the test's drops and
+                // defers (decision C911); in any function it calls it is a trap, as the language says
+                let mop = if msg > 0 { ir.op_str(inout c.ir, c.p.mods[c.am as usize].strs[(n.b - 1) as usize].copy()) } else { ir.op_str(inout c.ir, s("assertion failed")) }
+                let bm = ir.open(c.ir)
+                builtin_op(inout c, ir.B_TEST_FAIL, one(mop), types.UNIT, n.line)
+                drop_frames_from(inout c, 0)
+                emit(inout c, ir.S_RETURN, 0, 0, 0, 0, 0, n.line)
+                let failb = ir.close(inout c.ir, bm)
+                let okb = ir.empty_block(inout c.ir)
+                emit(inout c, ir.S_IF, 0, cv.op, okb, failb, 0, n.line)
+                return Ok(types.UNIT)
+            }
             emit(inout c, ir.S_ASSERT, 0, cv.op, msg, 0, 0, n.line)
             Ok(types.UNIT)
         }
     }
+}
+
+/// `skip(reason)` (decision C911): in a test's own body the test returns through its defers and is
+/// reported skipped; in a function a test calls it leaves as a trap does (no defers) and is still
+/// reported skipped; outside a test run it traps ("skip() outside a test").
+fn skip_call(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
+    if n.d != 1 {
+        let fd = err("E0405", n.line, n.col, s("`skip` takes exactly one reason"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let ae = arg_expr(c, at(c, n.c, 0))
+    let v = expr(inout c, ae, NONE)?
+    if !same(c, v.ty, types.STR) {
+        let x = nd(c, ae)
+        return Err(mismatch(c, x.line, x.col, types.STR, v.ty))
+    }
+    if c.ir.fns[c.ir.cur as usize].is_test {
+        builtin_op(inout c, ir.B_TEST_SKIP, one(v.op), types.UNIT, n.line)
+        drop_frames_from(inout c, 0)
+        emit(inout c, ir.S_RETURN, 0, 0, 0, 0, 0, n.line)
+    } else {
+        builtin_op(inout c, ir.B_TEST_SKIP_NOW, one(v.op), types.UNIT, n.line)
+        emit(inout c, ir.S_PANIC, 0, v.op, 0, 0, v.ty, n.line)
+    }
+    Ok(v_of(types.NEVER, ir.op_unit(inout c.ir)))
 }
 
 /// `let PAT = init`.
@@ -6791,6 +6853,10 @@ fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
             let cn = ndm(c, cd.md, cd.node)
             note_ref(inout c, am, n, cd.md, cn.line, cn.col)
         }
+        if cd.ty != types.STR && c.ir.ops[cd.op as usize].kind == ir.O_STR {
+            // an embedded file (`comptime embed`, "C8.87"): a new list of its bytes at each use
+            return Ok(v_of(cd.ty, builtin_op(inout c, ir.B_BYTES_LIT, one(cd.op), cd.ty, n.line)))
+        }
         return Ok(V(cd.ty, cd.op, cd.has_k, cd.k))
     }
     let di = mget(c.variants, k)
@@ -7539,6 +7605,10 @@ fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     let k = ekey(c, n)
     if is_builtin_fn(c, k) { return builtin(inout c, n, resolve.key_sym(k)) }
+    // `skip(reason)`: the test runner's, unless the program has its own function or local of that name
+    if resolve.key_pre(k) == 0 && resolve.key_sym(k) == c.w.skip && !c.fns.contains(k) && !c.tmpl.contains(k) && !c.variants.contains(k) && lookup(c, k) == NONE {
+        return skip_call(inout c, n)
+    }
     let vd = mget(c.variants, k)
     if vd != NONE {
         note_variant(inout c, n, vd, k)
@@ -8290,6 +8360,36 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
             record(inout c, rd)
         }
         return spawn(inout c, n)
+    }
+    if which == c.w.unwrap_failed {
+        // `__unwrap_failed(msg, e)` (the prelude's unwrap and expect on an Err): traps with `msg`, and
+        // with `: <e>` after it when the error type has Show; any other error type just gives `msg`, so
+        // `unwrap` still works on a Result whose error can't be shown
+        if n.d != 2 {
+            let fd = err("E0405", n.line, n.col, s("`__unwrap_failed` takes a message and an error"))
+            return fail_call(inout c, fd, n.c, n.d)
+        }
+        let me = arg_expr(c, at(c, n.c, 0))
+        let ee = arg_expr(c, at(c, n.c, 1))
+        let mv = expr(inout c, me, NONE)?
+        let ev = expr(inout c, ee, NONE)?
+        if !same(c, mv.ty, types.STR) {
+            let x = nd(c, me)
+            return Err(mismatch(c, x.line, x.col, types.STR, mv.ty))
+        }
+        if poisoned(c, ev.ty) || !has_trait(c, TR_SHOW, ev.ty) {
+            emit(inout c, ir.S_PANIC, 0, mv.op, 0, 0, mv.ty, n.line)
+            return Ok(v_of(types.NEVER, ir.op_unit(inout c.ir)))
+        }
+        let so = builtin_op(inout c, ir.B_STR_FROM, one(mv.op), types.STRING, n.line)
+        let sv = mk_fresh(inout c, v_of(types.STRING, so), n.line)
+        let place = place_of_op(inout c, sv.op, types.STRING, n.line)
+        let sep = ir.op_str(inout c.ir, s(": "))
+        builtin_op(inout c, ir.B_STR_PUSH, two(place + ir.ARG_PLACE, sep), types.UNIT, n.line)
+        builtin_op(inout c, ir.B_SHOW, two(place + ir.ARG_PLACE, ev.op), types.UNIT, n.line)
+        // c = 1: the String is fresh and the trap owns it (frees it after copying the text)
+        emit(inout c, ir.S_PANIC, 0, sv.op, 0, 1, types.STRING, n.line)
+        return Ok(v_of(types.NEVER, ir.op_unit(inout c.ir)))
     }
     if which == c.w.panic {
         if n.d != 1 {
@@ -11302,7 +11402,7 @@ fn ct_eval(inout c: C, e: u32) -> Result[CV, diag.Diag] {
             if cd.has_k { return Ok(cv(CV_INT, fold.bits64(cd.k))) }
             let o = c.ir.ops[cd.op as usize]
             if o.kind == ir.O_BOOL { return Ok(cv(CV_BOOL, o.v)) }
-            if o.kind == ir.O_STR { return Ok(CV(CV_STR, 0, c.ir.strs[o.a as usize], NONE, List.new())) }
+            if o.kind == ir.O_STR && cd.ty == types.STR { return Ok(CV(CV_STR, 0, c.ir.strs[o.a as usize], NONE, List.new())) }
             Err(cv_err(n))
         }
         _ => Err(cv_err(n)),

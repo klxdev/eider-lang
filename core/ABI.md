@@ -68,6 +68,7 @@ WebAssembly core module defines the three functions itself, over `ec_in_push` an
 |---|---|---|
 | `int64_t ec_read_file(void)` | `in[0]` path | file bytes in `out`; returns the length |
 | `int64_t ec_write_file(int32_t append)` | `in` = path NUL data | `0` |
+| `int64_t ec_write_file_mode(int32_t append, int32_t mode)` | `in` = path NUL data | `0`; as `ec_write_file`, a created file has permission bits `mode` (0 to `07777`, else `-EINVAL`) before the umask, set by the `open` that creates it; an existing file keeps its mode |
 | `int64_t ec_list_dir(void)` | `in[0]` path | names in `out`, each NUL-terminated, unordered, no `.`/`..` |
 | `int32_t ec_kind(int32_t follow)` | `in[0]` path | `0` missing, `1` file, `2` dir, `3` other, `4` symlink (only if `follow == 0`) |
 | `int64_t ec_mkdir(void)` | `in[0]` path | `0` (mode 0777 before umask) |
@@ -118,6 +119,16 @@ the rest      captured stderr
 
 A stream that is not captured contributes nothing (`n = 0` when stdout is inherited). On a
 timeout `out` holds whatever was read before the kill.
+
+`ec_run_ex(out_mode, err_mode, timeout_ms, flags, argc, envc)` is `ec_run` with the options of `ec_spawn_ex`
+(started by it, so a failure to start is `-errno` with the failed step in `out`, as there). `flags`: `1` new session,
+`4` the environment is only the given entries, `8` a working directory, `16` the child's stdin is a given byte string
+(else it is ours); anything else is `-EINVAL`. `in` = `argc` argument strings, `envc` `NAME=value` strings and the directory
+when flag 8, **each followed by NUL**, then, with flag 16, the stdin bytes to the end of `in` (any bytes, NUL included). The
+core feeds the bytes while it collects stdout and stderr and closes the child's stdin when they are written (at once when
+there are none), so input and output larger than a pipe do not deadlock; a child that exits or closes its stdin without
+reading it all is not an error: its status is the result. The deadline covers the feeding too (a timeout puts the child in its
+own process group, as for `ec_run`).
 
 Why one buffer with a header rather than a second `err` buffer: it adds no functions to the
 ABI (Eider already reads `out` with `ec_out_len`/`ec_out_byte`), keeps the "results flow
@@ -215,17 +226,20 @@ acts on:
 | `int64_t ec_fd_truncate(int32_t fd, int64_t len)` | | `0`; the file is now `len` bytes (zero-filled if it grew) |
 | `int64_t ec_fd_stat(int32_t fd)` | | `0`; `out` = the stat record (below) |
 | `int64_t ec_stat(int32_t follow)` | `in[0]` path | `0`; `out` = the stat record. `follow == 0` describes a final symlink itself. Unlike `ec_kind`, a missing path is `-ENOENT` |
+| `int64_t ec_statvfs(void)` | `in[0]` path | `0`; `out` = seven u64 for the file system holding the path (`statvfs(3)`): fragment size in bytes, blocks, free blocks, blocks available without privilege, inodes, free inodes, inodes available. Block counts are in fragment-size units |
 | `int64_t ec_touch(void)` | `in[0]` path | `0`; the file's access and modification times are now (`utimensat`, following a final symlink). The compiler's cache marks an entry used with it |
 | `int64_t ec_fd_chmod(int32_t fd, int32_t mode)` | | `0`; permission bits `mode & 07777` |
+| `int64_t ec_chmod(int32_t mode)` | `in[0]` path | `0`; the file's permission bits are `mode` (0 to `07777`, else `-EINVAL`; `chmod(2)`, follows symlinks). By path, so it works on a file the caller cannot open for reading |
 | `int64_t ec_fd_lock(int32_t fd, int32_t op)` | | `flock(2)`: `op` `0` unlock, `1` shared, `2` exclusive, `+4` don't wait (`-EWOULDBLOCK` while another open file holds a conflicting lock). The lock belongs to the open file (all `dup`s of it), is advisory, and goes away when the last descriptor of that open file closes |
 | `int64_t ec_fd_nonblock(int32_t fd, int32_t on)` | | `0`; `O_NONBLOCK` set (`on != 0`) or cleared. A non-blocking descriptor returns `-EAGAIN` instead of waiting |
 | `int64_t ec_fd_dup(int32_t fd)` | | a new descriptor (lowest free, close-on-exec) for the same open file (shared offset and locks) |
 | `int64_t ec_pipe(void)` | | `0`; `out` = read end, write end (u32 each). Blocking until `ec_fd_nonblock` |
 
-Stat record (32 bytes): u64 size in bytes; u64 kind (`1` file, `2` directory, `3` other, `4`
+Stat record (40 bytes): u64 size in bytes; u64 kind (`1` file, `2` directory, `3` other, `4`
 symlink, `5` FIFO, `6` socket, `7` character device, `8` block device; the first four as in
 `ec_kind`); u64 permission bits (`st_mode & 07777`); u64 modification time in nanoseconds
-since the Unix epoch (signed; `st_mtim`, `st_mtimespec` on macOS).
+since the Unix epoch (signed; `st_mtim`, `st_mtimespec` on macOS); u64 bytes allocated on disk
+(`st_blocks * 512`: less than the size for a sparse file).
 
 ## SIGPIPE
 
@@ -431,7 +445,11 @@ middle of a sequence of core calls: 0, or `-errno`, and it blocks until the kern
 | Function | Arguments | Result |
 |---|---|---|
 | `int64_t ec_spawn(int32_t in_mode, int32_t out_mode, int32_t err_mode)` | `in` = argv (NUL-separated; `argv[0]` searched on `PATH`) | the child's pid; `out` = our ends of its stdin, stdout and stderr pipes (u32 each, `-1` where not a pipe; close-on-exec, blocking). Each mode: `0` inherit ours, `1` `/dev/null`, `2` a pipe. Exec failure is the result (`-ENOENT`, `-EACCES`), with the child already reaped |
-| `int64_t ec_wait(int32_t pid, int32_t nohang)` | | `waitpid` (`pid -1`: any child): `0..255` the exit code, `256 + n` killed by signal `n`; `-EAGAIN` with `nohang != 0` while it still runs; `-ECHILD` if there is no such child. `out` = the reaped pid (u32) |
+| `int64_t ec_spawn_ex(int32_t in_spec, int32_t out_spec, int32_t err_spec, int32_t flags, int32_t argc, int32_t envc)` | `in` = `argc` argument strings, `envc` `NAME=value` strings, the working directory if `flags & 8`, then the path of each stream whose mode is 3 or 4, in stream order (all NUL-terminated; no shell, so no quoting) | as `ec_spawn`, with more per start. `*_spec`: the mode in the low byte, `fd << 8` for mode 5. Modes: `0` inherit, `1` `/dev/null`, `2` a pipe, `3` a file (stdin: opened for reading; stdout, stderr: created `0666` before the umask and truncated), `4` a file appended to (not stdin), `5` a duplicate of our descriptor `fd` (it stays ours; `-EBADF` if it isn't open), `6` stderr only: the same open file as stdout. `flags`: `1` new session (`setsid`), `2` new process group (`setpgid(0, 0)`; ignored with `1`), `4` the child's environment is only the given entries (else ours, with the entries added or replacing the same name), `8` change to the given directory first. Every file is opened by us before the fork, close-on-exec. `argv[0]` is searched on the `PATH` of the child's environment (the system default path when it has none). On failure: `-errno`, the child already reaped, and `out` = one u32, the step that failed: `10 + n` opening or checking the file or descriptor of stream `n`, `20` the directory, `21` the session or group, `22` setting up the streams, `23` exec (`0`: before the fork: pipes, memory); `-EINVAL` for a bad spec, count or entry (an environment entry needs a name and a `=`) |
+| `int64_t ec_setsid(void)` | | this process becomes the leader of a new session and group; the new id (`setsid(2)`) |
+| `int64_t ec_setpgid(int32_t pid, int32_t pgid)` | | `0`; process `pid` (`0`: this one) joins group `pgid` (`0`: its own id) (`setpgid(2)`) |
+| `int64_t ec_getpgid(int32_t pid)` | | the group of `pid` (`0`: this process) |
+| `int64_t ec_wait(int32_t pid, int32_t nohang)` | | `waitpid` (`pid -1`: any child; `pid < -1`: any child of process group `-pid`): `0..255` the exit code, `256 + n` killed by signal `n`; `-EAGAIN` with `nohang != 0` while it still runs; `-ECHILD` if there is no such child. `out` = the reaped pid (u32) |
 | `int64_t ec_kill(int32_t pid, int32_t sig)` | | `0`; `sig 0` only checks that `pid` exists. A negative `pid` is a process group |
 | `int64_t ec_getpid(void)` | | this process's id |
 

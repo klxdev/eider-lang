@@ -1,0 +1,23 @@
+// The repro of #238: `unwrap` on an Err whose error is a String (what every std function returns) says why, and
+// so does `expect`. (A contained trap does not unwind, so the error Strings leak here; tests/run/unwrap_message.ei is
+// the leak-checked one.)
+import std.fs
+import std.io
+
+fn caught(f: fn() -> i32) -> String uses io, fs {
+    match Task.catch(f) {
+        Ok(v) => String.from("ok")
+        Err(m) => m
+    }
+}
+
+fn main() uses io, fs {
+    print(caught(|| -> i32 { let r: Result[i32, String] = Err(String.from("the real reason"))
+        r.unwrap() }))
+    print(caught(|| -> i32 { let r: Result[i32, String] = Err(String.from("connection refused"))
+        r.expect("cannot reach the VM") }))
+    // a std error: the path and the reason
+    print(caught(|| -> i32 {
+        let b = fs.read("/nonexistent/eider/x".bytes()).unwrap()
+        b.len() as i32 }))
+}

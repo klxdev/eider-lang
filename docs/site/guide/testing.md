@@ -278,8 +278,35 @@ one.
 
 In these docs, a code block marked `eider,compile_fail=E0308` is the same kind of test.
 
+## Failed asserts clean up; skipping a test
+
+An `assert` that fails directly in a test's body reports the failure and then leaves the test **through its
+`defer`s and drops**, so what the test set up is torn down (a helper process stopped, a file removed) and the next
+test starts clean. In a function the test calls, a failed assert is still a trap that does not unwind (the rule
+in [memory](../reference/memory.md)); keep the `defer` in the test and the asserts in its body, or return a value
+from the helper and assert on it.
+
+`skip("reason")` ends a test that cannot run here (no KVM, no user namespaces, a missing binary). The test is reported
+as `test name ... skipped (reason)` and counted apart: `7 tests, 0 failed, 2 skipped`, so a suite on a machine that
+lacks something no longer reports checks that never ran as passed. In the test's own body it returns through the
+test's defers; called from a helper it leaves like a trap (no defers), so put it at the start of the test. A
+program that has its own function or variable named `skip` keeps it.
+
+```eider,ignore
+test "boots a microVM" {
+    if !fs.exists(l("/dev/kvm")) { skip("no /dev/kvm") }
+    let vm = start_vm()
+    defer stop_vm(vm)
+    assert vm.booted(), "the guest did not boot"     // a failure still runs stop_vm
+}
+```
+
+`--strict` (or `EIDER_TEST_STRICT=1`) makes a skip a failure, for CI machines where a missing dependency should be loud.
+
 ## Running everything
 
+- `scripts/ei test`: every test of the package in this directory (every file that has a `test` block, each run
+  once, one summary); `scripts/ei test dir` does the same for the package in `dir`.
 - `scripts/ei test file.ei`: one file's test blocks.
 - `scripts/ei test --compile-fail dir`: a compile-fail suite.
 - `sh tests/run.sh`, `sh tests/std/run.sh`, `sh tests/packages.sh`: the repository's run

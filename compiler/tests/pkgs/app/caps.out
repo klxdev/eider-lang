@@ -8,6 +8,8 @@
 {"package":"ublock","dir":"<root>/compiler/tests/pkgs/ublock","cap":"ffi","kind":"unsafe","fn":"twice","file":"ublock.ei","line":6,"col":13}
 {"package":"files","dir":"<root>/compiler/tests/pkgs/files","cap":"io","kind":"uses","fn":"Log.show","file":"files.ei","line":10,"col":24}
 {"package":"files","dir":"<root>/compiler/tests/pkgs/files","cap":"fs","kind":"uses","fn":"here","file":"files.ei","line":14,"col":10}
-{"package":"std","dir":"<root>/std","cap":"fs","kind":"uses","fn":"read","file":"fs.ei","line":24,"col":62}
+{"package":"std","dir":"<root>/std","cap":"fs","kind":"uses","fn":"read","file":"fs.ei","line":27,"col":62}
+{"package":"std","dir":"<root>/std","cap":"clock","kind":"uses","fn":"lock_until","file":"fs.ei","line":229,"col":112}
+{"package":"core","dir":"<root>/core","cap":"clock","kind":"uses","fn":"time_mono_ns","file":"os.ei","line":204,"col":35}
 --- stderr
 --- exit 0

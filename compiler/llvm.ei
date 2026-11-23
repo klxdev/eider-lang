@@ -1816,7 +1816,20 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
             // a computed message: the String's text is NUL-terminated, as for `print`
             let a = opa(inout e, p, s.a)
             let q = load_ptr_field(inout e, p, types.STRING, a, 0)
-            trap_with(inout e, q, s.line)
+            if s.c == 1 {
+                // a String built just for the trap (`__unwrap_failed`): the trap owns and frees it
+                declare(inout e, lit("ei_trap_owned"), lit("declare void @ei_trap_owned(ptr, i32) noreturn"))
+                let mut t = lit("call void @ei_trap_owned(ptr ")
+                bytes.append(inout t, q)
+                bytes.append(inout t, lit(", i32 "))
+                bytes.append(inout t, line_of(inout e, s.line))
+                bytes.append(inout t, lit(")"))
+                stmt_text(inout e, t)
+                stmt_text(inout e, lit("unreachable"))
+                e.term = true
+            } else {
+                trap_with(inout e, q, s.line)
+            }
         } else {
             let m = opv(inout e, p, s.a)
             trap_with(inout e, m, s.line)
@@ -2839,6 +2852,46 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let gn_ = gname(e, "utf8_", s.ty)
         let bd_ = bdst(inout e, p, s)
         call(inout e, p, gn_, tys2(types.STR, types.U64), args2(dp, n), s.ty, bd_)
+        return
+    }
+    if b == ir.B_TEST_FAIL || b == ir.B_TEST_SKIP || b == ir.B_TEST_SKIP_NOW {
+        // the test runner's own calls (core/eider_rt.h): the message is a string constant
+        let m = opv(inout e, p, barg(p, s, 0))
+        if b == ir.B_TEST_FAIL {
+            declare(inout e, lit("ei_test_fail"), lit("declare void @ei_test_fail(ptr, i32)"))
+            let mut t = lit("call void @ei_test_fail(ptr ")
+            bytes.append(inout t, m)
+            bytes.append(inout t, lit(", i32 "))
+            bytes.append(inout t, line_of(inout e, s.line))
+            bytes.append(inout t, lit(")"))
+            stmt_text(inout e, t)
+        } else if b == ir.B_TEST_SKIP {
+            declare(inout e, lit("ei_test_skip"), lit("declare void @ei_test_skip(ptr)"))
+            let mut t = lit("call void @ei_test_skip(ptr ")
+            bytes.append(inout t, m)
+            bytes.append(inout t, lit(")"))
+            stmt_text(inout e, t)
+        } else {
+            declare(inout e, lit("ei_test_skip_now"), lit("declare void @ei_test_skip_now(ptr) noreturn"))
+            let mut t = lit("call void @ei_test_skip_now(ptr ")
+            bytes.append(inout t, m)
+            bytes.append(inout t, lit(")"))
+            stmt_text(inout e, t)
+            stmt_text(inout e, lit("unreachable"))
+            e.term = true
+        }
+        return
+    }
+    if b == ir.B_BYTES_LIT {
+        // the embedded file's bytes: the string-table constant and its own length (not strlen:
+        // the bytes may hold NULs), through the same glue as `str.bytes()`
+        let x = p.ir.ops[barg(p, s, 0) as usize]
+        let sp = opv(inout e, p, barg(p, s, 0))
+        let n = bytes.from_u64(p.ir.strs[x.a as usize].len() as u64)
+        gneed(inout e, lower.GK_BYTES, s.ty)
+        let gn_ = gname(e, "bytes_", s.ty)
+        let bd_ = bdst(inout e, p, s)
+        call(inout e, p, gn_, tys2(types.STR, types.U64), args2(sp, n), s.ty, bd_)
         return
     }
     if b == ir.B_STR_BYTES || b == ir.B_STR_BYTE || b == ir.B_STR_SLICE {

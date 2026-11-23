@@ -861,7 +861,7 @@ fn text_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Tr
         if cont(t.b, i) || cont(t.b, j) { return Err(trap(p, fr, "slice not on a character boundary", x.line)) }
         return Ok(vstr(bytes.slice(t.b, i as usize, j as usize)))
     }
-    if b == ir.B_STR_BYTES {
+    if b == ir.B_STR_BYTES || b == ir.B_BYTES_LIT {
         let t = arg(p, fr, barg(p, x, 0))?
         let mut xs: List[Val] = List.new()
         for c in t.b { xs.push(vint(c as u64)) }

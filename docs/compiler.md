@@ -4347,9 +4347,9 @@ failed: <why>" at the call. The rewrite happens once (a retried constant sees li
 Cache: nothing extra is needed. The text is spliced into the program like any comptime value,
 so the unit hash of the code that holds it changes with the file; the interface hash of a
 module that exposes the constant too. `embed` is reserved inside comptime initializers: a
-user function with that name is shadowed there. Not done: `List[u8]` data (needs aggregate
-comptime types, #100), and an analyzer dependency edge from the source file to the data file
-(the analyzer re-analyses when the source changes, not when only the data file does).
+user function with that name is shadowed there. `List[u8]` data is C8.87. Not done: an analyzer
+dependency edge from the source file to the data file (the analyzer re-analyses when the source
+changes, not when only the data file does).
 
 ## C8.56: `eiderc lint` (#113, #85)
 
@@ -4429,6 +4429,7 @@ generator draws a length up to 64 and random bytes, case 0 being the empty input
 
 Not done: `eiderc test` discovering `bench`/`fuzz` as separate kinds, the
 timing statistics of a benchmark (median, spread), and a fuzz corpus directory on disk.
+
 
 ## C8.59: std/cli (#114)
 
@@ -5097,3 +5098,197 @@ that in a resolver timeout gets the error, not unbounded threads).
 `net.lookup_by(host, service, family, kind, dl)` is `lookup` with `dl`: an error naming the host and "the deadline
 passed" at the deadline. Not done: `http/client` accepting a host name (acceptance of #59) belongs to eider-http, which can
 call `net.lookup_by` now.
+
+## C8.87: `comptime embed` of bytes (#160, #102)
+
+Decision C904. Code: consteval.ei (`T_BYTES` in `const_kind`, the `binary` flag of `embed_all` and `embed_read`, the
+`e = 3` mark in `eval_one`), check.ei (`check_const`, `ident_value`), ir.ei (`B_BYTES_LIT`), llvm.ei and interp.ei (its
+lowering and evaluation); tests: tests/run/embed_bytes.ei (data in tests/run/embed/blob.bin),
+tests/checks/fail/e0807_embed_bytes_*.ei and e0807_embed_list_i32.ei.
+
+`const X: List[u8] = comptime embed("path")` is the file's bytes, any content. The constant's type picks the form of
+the one function: `str` (C8.55) needs valid UTF-8, `List[u8]` takes anything. The initializer must be the `embed` call
+itself (E0807 otherwise, at the constant's name: a `List[u8]` has no comptime evaluation); the path rules and their
+errors are C8.55's. `eval_one` leaves the call as a literal node holding the bytes (in the module's `strs`, which may
+hold NUL and any other byte: they are `List[u8]`) and marks the constant `e = 3`. `check_const` gives such a constant
+the type `List[u8]` (exempt from E0504: it owns no heap memory, the value is a table entry) and registers the table
+entry as its operand; each use (`ident_value`) is `B_BYTES_LIT` of that operand: a new list of all the bytes of the
+entry, made by the same glue as `str.bytes()` but with the entry's length, not `strlen`. So the file is a private
+constant in the binary's read-only data (`@.sN`, emitted only when used, `\XX`-escaped in the IR), and a use costs one
+allocation and one `memcpy`; the list is the program's own (a change, a `push`, a `move` never touches the constant or
+the next use). The comptime interpreter does the same (`B_BYTES_LIT` in interp.ei). The constant is used from any
+thread: there is no shared state.
+
+Not done, as proposed in #102 and left for measurement: a static buffer shared with a never-zero count (a use would
+cost nothing, but the count is a plain `n++` in inline IR at many sites and the C core, so it needs an immortal
+sentinel in each and a thread-safety argument). The embed of a directory is #229. The analyzer edge of C8.55 is still
+open.
+
+## C8.88: `comptime embed_dir` and std/embed (#229, #102)
+
+Decision C905. Code: consteval.ei (`embed_dir_pack`, `dir_files`, the `embd` case of `embed_all`), std/embed.ei; tests:
+tests/run/embed_dir.ei (the tree in tests/run/embed/site/), tests/checks/fail/e0807_embed_dir_*.ei.
+
+`const WEB: List[u8] = comptime embed_dir("web")` embeds every file under a directory. It is C8.87's constant (a
+`List[u8]` whose initializer is the call; E0807 for any other type), and `embed_dir` is `embed`'s directory form: a
+string literal relative to the declaring file, the directory inside the package after symlinks (checked before anything is
+read, so `..` does not walk the tree), every file read by `embed_read`, so each one is confined too. The files are the
+regular files under the directory, recursively; a symbolic link to a file is that file, one to a directory is an error (they
+are not followed: no loops), and so is any other kind of file, a missing directory and a directory with no files. They are
+packed in byte order of their relative paths (`/` separators) into one archive, so the result does not depend on the order the
+file system lists them: `"EMB1"`, a u32 count, then per file a u32 path length, the path, a u64 data length and the data, all
+little endian. The call becomes a literal node holding the archive, as in C8.87.
+
+std/embed reads the archive with no capability: `count`, `paths`, `assets` (a `List[Asset]`, `Asset = { path, data }`, both
+`List[u8]`) and `get(archive, path) -> Option[List[u8]]`, which copies only the file it finds. Every read is bounds-checked:
+a value that is not an archive is an `Err`/`None`, never a trap. Each use of the constant is a copy of the whole archive
+(C8.87), so a program takes it once into a `let`.
+
+Why an archive in a `List[u8]` and not a `List[Asset]` constant (as first proposed in #102): a constant of records owns heap
+memory (E0504) and an aggregate comptime value is #100; the archive needs neither, and `assets` gives the list. Not done: a
+glob form (a directory and a filter in code cover migrations and static sites; revisit if #229's case needs one), and an
+analyzer edge from the sources to the embedded files.
+
+## C8.89: file locks, chmod and write modes in std/fs (#243)
+
+Decision C906. Code: core/eider_core.c (`ec_chmod`, `ec_write_file_mode`), core/ABI.md ("Files"), core/os.ei (`chmod`,
+`write_file_mode`, `fd_release`), std/fs.ei; tests: tests/std/fs_lock.ei (one process: exclusive and shared, `try_lock`,
+`lock_until`, a blocking task, early return and `?`, a directory, a child that must not inherit the lock, chmod and the
+modes) and tests/std/fs_lock_procs.ei (four processes adding to one counter, which ends at exactly 200).
+
+`std/fd` already had the primitives (`open` with a mode, `lock(fd, exclusive, wait)`, `unlock`, `chmod(fd, mode)`); the gap
+was the path level. `fs.lock(path, exclusive)`, `fs.try_lock` and `fs.lock_until(path, exclusive, dl)` return a `Lock`, a
+record whose `Drop` closes its descriptor, which is what releases an `flock`. So it is released at the end of its scope, on an
+early `return` and on `?` (the drop runs on every normal exit; a trap runs no drops, but the kernel releases the lock when the
+process ends). `Drop` cannot declare capabilities, so the drop calls `os.fd_release`, a core function whose only capability is
+`ffi`, which does not leave its package (the way std/profile's `Restore` reaches the core): releasing a handle the program
+already holds needs no capability of its own, and `fs.lock` itself needs `fs`. The descriptor is opened by `fd.open`, which is
+`O_CLOEXEC`, so a child started with `std/child` does not keep the lock alive (tested). A file that is missing is created
+(0644 before the umask), never truncated, and left in place on release; a directory is locked as it is. The lock belongs to the
+open file description, so two `lock`s of one path conflict inside one process too. `flock` has no timeout, so `lock_until`
+tries with `LOCK_NB` and sleeps 1 ms doubling to 20 ms between tries, checking the deadline after each (it may return a little
+late; a passed deadline still tries once); `lock` blocks the OS thread.
+
+`fs.chmod(path, mode)` is `chmod(2)` by path (`ec_chmod`), because `fd.chmod` needs a descriptor and opening one needs read
+access, which a mode-0200 file does not give. `fs.write_mode` and `fs.append_mode` are `write` and `append` with
+`ec_write_file_mode`: `open(O_CREAT, mode)` creates the file with its mode in one step (never more permissive, even briefly,
+which a `write` followed by `chmod` is), an existing file keeps its own mode. A mode above `0o7777` is an error in both, not
+masked. `fs.write` and `fs.append` are unchanged (0666 before the umask, as before).
+
+Not done: byte-range locks (`fcntl`), a lock that waits in a task without blocking its thread (use `lock_until`), `fs.touch`.
+
+## C8.90: `child.start_with`, process groups and sessions (#239, #233)
+
+Decision C907. Code: core/eider_core.c (`ec_spawn_ex`, `spawn_env`, `ec_setsid`, `ec_setpgid`, `ec_getpgid`; `ec_spawn` is a
+wrapper over `ec_spawn_ex` now), core/ABI.md ("Processes"), core/os.ei, std/child.ei (`Stdio`, `Spawn`, `options`, `start_with`,
+`kill_group`, `wait_group`, `setsid`, `set_group`, `group_of`); tests: tests/core/os_test.c (`test_spawn_ex`),
+tests/std/child_spawn.ei.
+
+`child.start` could only inherit a stream, send it to /dev/null or to a pipe. `start_with(argv, options)` adds a file (`File`:
+read for stdin, created and truncated for stdout and stderr; `Append`), one of our descriptors (`Fd`, a duplicate, still ours), and
+`Stdout` for stderr (`2>&1`: the same open file, so the output stays in order); the environment (added to ours, replacing the same
+name, or `clear_env` for only the given variables); a working directory; and a new session (`detached`, `setsid`) or process group
+(`with_group`, `setpgid(0, 0)`). No shell is involved, so nothing is quoted: `ec_spawn_ex` takes the arguments, the
+`NAME=value` entries, the directory and the file paths as NUL-separated strings in the core's input buffer.
+
+Everything that can fail is done before the program runs and reported with the step that failed. The files are opened and the
+descriptor checked by the parent, before the fork (close-on-exec, so the child has only 0..2); the directory, session and stream
+setup happen in the child with async-signal-safe calls only (the environment array is built in the parent, and the child sets
+`environ` before `execvp`). A failure in the child is written to the same close-on-exec pipe that reports a failed `exec`, as
+`{stage, errno}`; the parent reaps the child and returns `-errno` with the stage in `out`, which `start_with` turns into
+"cannot run X: cannot open stdout file P: ..." or "...cannot change directory to D: ...". Bad options (stdin appended,
+`Stdout` anywhere but stderr, a variable without a name or with `=` in it, a NUL byte, an empty path) are refused by
+`start_with` before anything runs, and by the core with `-EINVAL`.
+
+The program is searched on the `PATH` of the child's environment (ours unless `clear_env`, then execvp's default path): the
+lookup happens after the environment is set. The group helpers: `kill_group(pgid, sig)` is `ec_kill` with `-pgid` (it refuses
+`pgid < 2`: `-1` would be every process we may signal), `wait_group(pgid)` is `waitpid(-pgid)` for any child in the group and
+returns which pid ended (`Reaped`), `setsid`, `set_group` and `group_of` are the calls of the same name for the caller.
+
+`proc.run_spec` is the other half of #239 (C8.92). Not done: user and group switching, resource limits, a pseudo-terminal.
+
+## C8.91: `fs.stat`, `read_range`, `statvfs` and the allocated size (#212, #233)
+
+Decision C908. Code: core/eider_core.c (`stat_put`, `ec_statvfs`), core/ABI.md ("Files": the stat record is 40 bytes, `ec_statvfs`),
+core/os.ei, std/fd.ei (`Stat.allocated`, `CHAR_DEVICE`, `BLOCK_DEVICE`), std/fs.ei (`stat`, `lstat`, `read_range`, `FsStats`,
+`statvfs`); tests: tests/core/os_test.c (`test_sparse_and_statvfs`), tests/std/fs_stat.ei.
+
+Most of #212 was already in `std/fd`: `fd.stat_path(path, follow)` returns size, kind, permission bits and mtime, and `fd.read_at`
+reads a range. What was added is the path-level API in `std/fs` and the allocated size. The stat record gained a last field,
+the bytes allocated on disk (`st_blocks * 512`), so a sparse file (a volume image made with `truncate`) shows `allocated < size`;
+`fd.Stat` got `allocated` as its last field, so code that reads fields is unaffected (only std/fd constructs a `Stat`, in this
+repository and in the siblings). `fs.stat` follows a final symlink, `fs.lstat` describes it; a missing path is an error.
+`fs.read_range(path, offset, max)` opens, reads with `pread` in a loop (a single read gives at most 1 MiB) and closes: up to `max`
+bytes, fewer at the end, empty past it; it needs `io` as well as `fs`. `fs.statvfs(path)` is `statvfs(3)`: `FsStats` has the block
+size, and total, free and available bytes (blocks times the fragment size) and inodes; `available` is what an unprivileged process can
+use, `free` what the superuser can. File systems that report counts with every bit set are clamped to the largest i64, not trapped on.
+
+Not done: access and change times, owner, link count, inode and device numbers (they can be appended to the record the same way),
+`utimes` with chosen times.
+
+## C8.92: `proc.run_spec`: stdin, environment, directory (#239)
+
+Decision C909. Code: core/eider_core.c (`run_impl`, `ec_run_ex`; `ec_run` is a wrapper now), core/ABI.md ("Running a program"),
+core/os.ei, std/child.ei (`Plan`, `plan`, `describe_failure`), std/proc.ei (`Spec`, `spec`, `run_spec`); tests: tests/core/os_test.c
+(`test_run_ex`), tests/std/proc_spec.ei.
+
+`proc.run_with` could not give a program input, an environment or a directory. `proc.run_spec(argv, options, spec)` can:
+`proc.spec().with_stdin(bytes).with_env(n, v).clear_env().with_cwd(dir).detached()`. The work is in the core, where the loop
+that already drains stdout and stderr under a deadline now also feeds stdin: `ec_run` starts its child with `ec_spawn_ex` (so the
+two share every start option, the failure stages and the error text: `child.plan` and `child.describe_failure` are the shared
+Eider side), makes the child's stdin pipe non-blocking and polls it for `POLLOUT` beside the two output pipes, closing it when
+the bytes are written (at once if there are none). So input and output larger than a pipe do not deadlock (tested with 3 MiB each
+way), and the deadline covers the feeding. A child that exits or closes its stdin without reading everything is not an error
+(`SIGPIPE` is ignored by the spawn, the write fails with `EPIPE`, the stream is closed, and the exit status is the result). Without
+`with_stdin` the child's stdin is ours, as in `run_with`; a timeout still puts the child in its own group. `ec_run`'s behaviour
+is unchanged (its own tests pass on the new path). The wire form of `ec_run_ex` is NUL-terminated strings followed by the raw stdin
+bytes, because the input may contain NULs.
+
+## C8.93: `unwrap` and `expect` say what the error was (#238)
+
+Decision C910. Code: core/prelude.ei (`Result.unwrap`, `Result.expect`, `Option.expect`), check.ei (the `__unwrap_failed`
+intrinsic, `W.unwrap_failed`); tests: tests/run/unwrap_message.ei.
+
+`r.unwrap()` on an `Err` trapped with "called `unwrap` on an Err value" and dropped the error. It now says
+`called `unwrap` on an Err value: <e>`, and `r.expect("msg")` (new, also on `Option`) traps with `msg: <e>`. The error is
+shown through `Show`, which every `String` error from std and every derived record or enum has. `unwrap` is defined for any `E`
+with no bound, so a Result whose error cannot be shown (a function, say) must keep working: the prelude calls
+`__unwrap_failed(msg, e)`, a checker intrinsic like `panic`, which per instantiation asks `has_trait(Show)` of the error type and
+builds `msg: <e>` (a fresh `String`, `B_SHOW` into it) or, when there is no Show, traps with `msg` alone. The name starts with
+`__` so no user function name becomes reserved. Landing it took two steps, because the seed compiler reads the prelude: the
+intrinsic first, the seed regenerated, then the prelude.
+
+## C8.94: the test runner: asserts that clean up, `skip`, `--strict`, package runs (#240, #241, #244)
+
+Decision C911. Code: core/eider_rt.c (`ei_test_fail`, `ei_test_skip`, `ei_test_skip_now`, `ei_test`, `ei_tests_done`),
+check.ei (`SAssert`, `skip_call`, `W.skip`), ir.ei (`B_TEST_FAIL`, `B_TEST_SKIP`, `B_TEST_SKIP_NOW`), llvm.ei, main.ei
+(`--strict`, `eiderc test <dir>`), pkgtest.ei; tests: tests/run/test_soft_fail.ei.
+
+A failed `assert` is a trap, and a trap does not unwind (memory.md), so a test that failed an assertion leaked what it set up,
+and the runner went on in the same process. Only for `test` blocks: an `assert` written directly in a test's own body (the
+checker knows it is in a test function, not a closure or a helper) is compiled as `if !cond { ei_test_fail(msg); <drops and
+defers>; return }`, the same exit path a `return` takes. `ei_test_fail` prints `FAILED` and the message exactly as a trap does and
+returns; `ei_test` then counts the test as failed. An assert in a function the test calls is unchanged. `skip(reason)` is the
+same shape (`ei_test_skip`, then the return path); from a helper it is `ei_test_skip_now`, which leaves through the trap's
+`longjmp` (no defers) and is still reported as skipped, and sets a flag that turns off the leak report, which would otherwise count
+the abandoned frames. Outside a test run it traps. A skipped test prints `skipped (reason)` and is counted: `N tests, F failed,
+S skipped[, K filtered out]`; with `--strict` or `EIDER_TEST_STRICT` set it is a failure. `skip` is not a reserved word: the call
+is the runner's only when the program has no function, variant or local of that name.
+
+#244 was largely there (`eiderc test` with no file runs every file with a `test` block, once, with one summary: pkgtest.ei).
+Added: `eiderc test <dir>` for the package in another directory, the skipped count in the aggregate line, `--strict` (and
+`--filter`, which existed, is passed through). Two quick improvements to diagnostics of the same issues: E0401 for an array where a
+List is expected says the List literal is `List[...]` (#225), and E0001 for a `{...}` that is not an expression says a literal
+brace is written `{{` and `}}` (#234, where the escape already existed).
+
+## C8.95: `serial(skip_none)` (#242)
+
+Decision C912. Code: std/serial.ei (`skip_none` on `serial`, `json` and `toml`, `Optional`, `serialize_record`); tests:
+tests/std/serial_skip_none.ei.
+
+`@[serial(skip_none)] initrd: Option[String]` leaves the field out when it is `None` instead of writing a null (json, toml, every
+format: `json(skip_none)` and `toml(skip_none)` are per format, as for the other attributes). Which fields are written is needed
+before the first one (`begin_record(n)`), so `serialize_record` decides per field in both loops. It asks the value through a new
+trait `Optional { fn is_absent }`, implemented for `Option[T]`, and only inside a `comptime if` on the attribute, so a field
+without it needs nothing and a `skip_none` on a field that is not an `Option` is a compile error naming the missing trait. Reading
+an absent field into an `Option` already gave `None`, so the two directions match.

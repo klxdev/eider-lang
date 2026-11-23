@@ -1,7 +1,9 @@
 //! std/child: start programs without waiting, with each of stdin/stdout/stderr inherited,
 //! /dev/null or a pipe, so they can become streams; wait (blocking or not), kill
-//! (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
-//! anything, so starting, waiting for and killing one needs io, fs and net.
+//! (core/ABI.md "Processes"). `start_with` also sends a stream to a file or a descriptor, sets the
+//! environment and directory, and starts a new session or process group, with no shell in between;
+//! `kill_group` and friends act on process groups. std/proc runs a program to completion instead.
+//! A child can do anything, so starting, waiting for and killing one needs io, fs and net.
 
 import core.sys
 import core.os
@@ -33,6 +35,275 @@ pub fn start(argv: List[List[u8]], stdin: i32, stdout: i32, stderr: i32) -> Resu
     }
     let r = sys.take()
     Ok(Child(n as i32, os.le_fd(r, 0), os.le_fd(r, 4), os.le_fd(r, 8)))
+}
+
+// ---- start_with: the other places a child's streams can go, its environment, directory, session
+
+/// What one of a child's streams is, for `start_with`.
+///   Inherit  ours (the default)          Null     /dev/null
+///   Pipe     a pipe to us (`Child` gets our end)
+///   File(p)  stdin: read from p; stdout, stderr: write to p, created (0666 before the umask) and truncated
+///   Append(p)  stdout, stderr: append to p, created if missing (`>>`)
+///   Fd(n)    a duplicate of our open descriptor n (it stays ours; close it when done)
+///   Stdout   stderr only: the same open file as stdout (`2>&1`), so the two stay in order
+pub type Stdio = | Inherit | Null | Pipe | File(List[u8]) | Append(List[u8]) | Fd(i32) | Stdout
+
+/// One environment variable.
+pub type Var = { name: List[u8], value: List[u8] }
+
+/// How to start a child (`options()`, changed with the `with_*` methods, then `start_with`).
+/// `env` adds to our environment (an entry replaces our variable of the same name), or is the
+/// whole environment with `clear_env`. `cwd` is changed to in the child when `has_cwd`.
+/// `new_session` is `setsid` (a new session and process group, no controlling terminal);
+/// `new_group` is `setpgid(0, 0)` (a new group in our session).
+pub type Spawn = { stdin: Stdio, stdout: Stdio, stderr: Stdio, env: List[Var], clear_env: bool, cwd: List[u8], has_cwd: bool, new_session: bool, new_group: bool }
+
+/// Everything inherited: what `start(argv, INHERIT, INHERIT, INHERIT)` does.
+pub fn options() -> Spawn {
+    Spawn(Inherit, Inherit, Inherit, List.new(), false, List.new(), false, false, false)
+}
+
+impl Spawn {
+    fn with_stdin(self, s: Stdio) -> Spawn {
+        Spawn(s, self.stdout, self.stderr, self.env, self.clear_env, self.cwd, self.has_cwd, self.new_session, self.new_group)
+    }
+    fn with_stdout(self, s: Stdio) -> Spawn {
+        Spawn(self.stdin, s, self.stderr, self.env, self.clear_env, self.cwd, self.has_cwd, self.new_session, self.new_group)
+    }
+    fn with_stderr(self, s: Stdio) -> Spawn {
+        Spawn(self.stdin, self.stdout, s, self.env, self.clear_env, self.cwd, self.has_cwd, self.new_session, self.new_group)
+    }
+    /// One more variable (a later one with the same name wins).
+    fn with_env(self, name: List[u8], value: List[u8]) -> Spawn {
+        let mut e = self.env.copy()
+        e.push(Var(name, value))
+        Spawn(self.stdin, self.stdout, self.stderr, e, self.clear_env, self.cwd, self.has_cwd, self.new_session, self.new_group)
+    }
+    /// The environment is only the `with_env` variables.
+    fn clear_env(self) -> Spawn {
+        Spawn(self.stdin, self.stdout, self.stderr, self.env, true, self.cwd, self.has_cwd, self.new_session, self.new_group)
+    }
+    fn with_cwd(self, path: List[u8]) -> Spawn {
+        Spawn(self.stdin, self.stdout, self.stderr, self.env, self.clear_env, path, true, self.new_session, self.new_group)
+    }
+    /// A new session (`setsid`): the child outlives our terminal and is not in our process group.
+    fn detached(self) -> Spawn {
+        Spawn(self.stdin, self.stdout, self.stderr, self.env, self.clear_env, self.cwd, self.has_cwd, true, self.new_group)
+    }
+    /// A new process group in our session, so `kill_group` reaches the child and what it starts.
+    fn with_group(self) -> Spawn {
+        Spawn(self.stdin, self.stdout, self.stderr, self.env, self.clear_env, self.cwd, self.has_cwd, self.new_session, true)
+    }
+}
+
+fn has_nul(s: List[u8]) -> bool {
+    for b in s {
+        if b == 0 { return true }
+    }
+    false
+}
+
+fn bad(what: str, why: str) -> String {
+    let mut m = String.from("child: ")
+    m.push_str(what)
+    m.push_str(": ")
+    m.push_str(why)
+    m
+}
+
+/// The core's spec of stream `k` (0 stdin, 1 stdout, 2 stderr); its file path, if any, goes to `files`.
+fn spec_of(s: Stdio, k: i32, inout files: List[List[u8]]) -> Result[i32, String] {
+    match s {
+        Inherit => Ok(0)
+        Null => Ok(1)
+        Pipe => Ok(2)
+        File(p) => {
+            if has_nul(p) || p.len() == 0 { return Err(bad("a file path", "empty or with a NUL byte")) }
+            files.push(p)
+            Ok(3)
+        }
+        Append(p) => {
+            if k == 0 { return Err(bad("stdin", "cannot append (use File to read a file)")) }
+            if has_nul(p) || p.len() == 0 { return Err(bad("a file path", "empty or with a NUL byte")) }
+            files.push(p)
+            Ok(4)
+        }
+        Fd(n) => {
+            if n < 0 || n > 8000000 { return Err(bad("a descriptor", "not a valid descriptor number")) }
+            Ok(5 + n * 256)
+        }
+        Stdout => {
+            if k != 2 { return Err(bad("Stdout", "is only for stderr")) }
+            Ok(6)
+        }
+    }
+}
+
+fn stream_name(k: i32) -> str {
+    if k == 0 { return "stdin" }
+    if k == 1 { return "stdout" }
+    "stderr"
+}
+
+fn stdio_of(o: Spawn, k: i32) -> Stdio {
+    if k == 0 { return o.stdin }
+    if k == 1 { return o.stdout }
+    o.stderr
+}
+
+/// What failed, for the error of `start_with`: the core's stage number (core/ABI.md "Processes").
+pub fn describe_failure(argv0: List[u8], o: Spawn, stage: u32, status: i64) -> String {
+    let mut m = String.from("cannot run ")
+    m.append(sys.to_string(argv0))
+    m.push_str(": ")
+    if stage >= 10 && stage <= 12 {
+        let k = (stage - 10) as i32
+        match stdio_of(o, k) {
+            File(p) => {
+                m.push_str("cannot open ")
+                m.push_str(stream_name(k))
+                m.push_str(" file ")
+                m.append(sys.to_string(p))
+                m.push_str(": ")
+            }
+            Append(p) => {
+                m.push_str("cannot open ")
+                m.push_str(stream_name(k))
+                m.push_str(" file ")
+                m.append(sys.to_string(p))
+                m.push_str(": ")
+            }
+            _ => {
+                m.push_str("cannot use the descriptor for ")
+                m.push_str(stream_name(k))
+                m.push_str(": ")
+            }
+        }
+    } else if stage == 20 {
+        m.push_str("cannot change directory to ")
+        m.append(sys.to_string(o.cwd))
+        m.push_str(": ")
+    } else if stage == 21 {
+        m.push_str("cannot start a new session or process group: ")
+    } else if stage == 22 {
+        m.push_str("cannot set up the child's streams: ")
+    }
+    m.append(sys.error_text(status))
+    m
+}
+
+/// What a start needs besides its streams: the argument, environment and directory strings the core
+/// takes (in that order), its flags (1 new session, 4 clear environment, 8 directory) and how many of the
+/// strings are environment entries. Used by `start_with` and by `proc.run_spec`; checks them all.
+pub type Plan = { strings: List[List[u8]], flags: i32, envc: i32 }
+
+pub fn plan(argv: List[List[u8]], o: Spawn) -> Result[Plan, String] {
+    if argv.len() == 0 { return Err(String.from("proc: empty command")) }
+    let mut all: List[List[u8]] = List.new()
+    for a in argv {
+        if has_nul(a) { return Err(bad("an argument", "has a NUL byte")) }
+        all.push(a)
+    }
+    for v in o.env {
+        if v.name.len() == 0 || has_nul(v.name) || has_nul(v.value) { return Err(bad("an environment variable", "needs a name, and no NUL bytes")) }
+        for c in v.name {
+            if c == 61 { return Err(bad("an environment variable", "a name cannot contain `=`")) }
+        }
+        let mut e = v.name.copy()
+        e.push(61)
+        for c in v.value { e.push(c) }
+        all.push(e)
+    }
+    let mut flags: i32 = 0
+    if o.new_session { flags += 1 }
+    if o.clear_env { flags += 4 }
+    if o.has_cwd {
+        if o.cwd.len() == 0 || has_nul(o.cwd) { return Err(bad("the directory", "empty or with a NUL byte")) }
+        flags += 8
+        all.push(o.cwd)
+    }
+    Ok(Plan(all, flags, o.env.len() as i32))
+}
+
+/// Start `argv` (searched on the PATH of the child's environment) as `options()` and the `with_*`
+/// methods say, without a shell in between. The files, the directory and the program are all
+/// checked before this returns: an `Err` says which step failed, and no child is left running.
+/// Every file this opens is closed in the child, which has only its streams 0, 1 and 2.
+///
+///     let o = child.options().with_stdout(child.Append(log)).with_stderr(child.Stdout).detached()
+///     let c = child.start_with(argv, o)?
+pub fn start_with(argv: List[List[u8]], o: Spawn) -> Result[Child, String] uses io, fs, net {
+    let p = plan(argv, o)?
+    let mut all = p.strings.copy()
+    let mut flags = p.flags
+    if o.new_group { flags += 2 }
+    let mut files: List[List[u8]] = List.new()
+    let si = spec_of(o.stdin, 0, inout files)?
+    let so = spec_of(o.stdout, 1, inout files)?
+    let se = spec_of(o.stderr, 2, inout files)?
+    for f in files { all.push(f) }
+    sys.send_all(all)
+    let n = os.spawn_ex(si, so, se, flags, argv.len() as i32, p.envc)
+    if n < 0 {
+        let r = sys.take()
+        let stage = if r.len() >= 4 { os.le_u32(r, 0) } else { 0 }
+        return Err(describe_failure(argv[0], o, stage, n))
+    }
+    let r = sys.take()
+    Ok(Child(n as i32, os.le_fd(r, 0), os.le_fd(r, 4), os.le_fd(r, 8)))
+}
+
+// ---- process groups and sessions
+
+fn status_error(what: str, n: i64) -> String {
+    let mut m = String.from(what)
+    m.push_str(": ")
+    m.append(sys.error_text(n))
+    m
+}
+
+/// Send signal `sig` to every process of group `pgid` (a child started with `with_group()` or
+/// `detached()` leads its own group, named by its pid, along with everything it starts).
+pub fn kill_group(pgid: i32, sig: i32) -> Result[bool, String] uses io, fs, net {
+    if pgid < 2 { return Err(String.from("kill_group: not a process group id")) }
+    let n = os.kill(0 - pgid, sig)
+    if n < 0 { return Err(status_error("kill_group", n)) }
+    Ok(true)
+}
+
+/// A child that was waited for: its pid and how it ended.
+pub type Reaped = { pid: i32, exit: Exit }
+
+/// Wait for any child of ours in group `pgid` to end (blocking), whichever ends first.
+pub fn wait_group(pgid: i32) -> Result[Reaped, String] uses io, fs, net {
+    if pgid < 2 { return Err(String.from("wait_group: not a process group id")) }
+    let n = os.wait(0 - pgid, false)
+    if n < 0 { return Err(status_error("wait", n)) }
+    let r = sys.take()
+    Ok(Reaped(os.le_u32(r, 0) as i32, exit_of(n)))
+}
+
+/// This process leaves its session and process group for a new one it leads; the new id (the pid).
+/// Fails when it already leads a group (a daemon calls it after forking away, or starts itself with
+/// `detached()` instead).
+pub fn setsid() -> Result[i32, String] uses io, fs, net {
+    let n = os.setsid()
+    if n < 0 { return Err(status_error("setsid", n)) }
+    Ok(n as i32)
+}
+
+/// Process `pid` (0: this one) joins process group `pgid` (0: a new group named by `pid`).
+pub fn set_group(pid: i32, pgid: i32) -> Result[bool, String] uses io, fs, net {
+    let n = os.setpgid(pid, pgid)
+    if n < 0 { return Err(status_error("set_group", n)) }
+    Ok(true)
+}
+
+/// The process group of `pid` (0: this process).
+pub fn group_of(pid: i32) -> Result[i32, String] uses io, fs, net {
+    let n = os.getpgid(pid)
+    if n < 0 { return Err(status_error("group_of", n)) }
+    Ok(n as i32)
 }
 
 fn exit_of(n: i64) -> Exit {
