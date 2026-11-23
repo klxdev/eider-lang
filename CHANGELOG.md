@@ -7,6 +7,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## 0.7.7
 
+**The release key changed** (decision C914): releases from 0.7.7 are signed with key `E679042E15631DD2`; the first key's secret half
+was lost. An `eider` older than 0.7.7 rejects them: reinstall once with `install.sh` (`eider self update` cannot).
+
 A patch of correctness fixes in the checker and the runtime, three of them breaking, and the std, tooling and test-runner work for hatchd (the Firecracker manager, the first systems program written in Eider): see "Std, tooling and runner" below. The fixes: a `let` of a scalar now copies
 (#183), a write under a live reference is E0308, and a `sync.Lock` is poisoned by a contained trap instead of
 deadlocking (#211; `Lock.reset` recovers). Disjoint fields of one record can be borrowed together (#219) and scalar

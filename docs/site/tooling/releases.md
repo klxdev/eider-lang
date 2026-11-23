@@ -212,7 +212,7 @@ scripts/release.sh [--skip-verify] [--targets "linux-x86_64 linux-aarch64"] [--n
    verified = true
    backend = "c"
    clang_tested = ["17.0.6", "20.1.8", "22.1.8", "23.1.5"]
-   release_key = "51439F1DFD014199"
+   release_key = "E679042E15631DD2"
 
    [component.eider-lang]
    version = "0.1.0"
@@ -272,8 +272,8 @@ format. Its public key is in eider-lang as `packages/eider/release.pub`, compile
 `eider` (`packages/eider/release_key.ei`) and written into `install.sh`:
 
 ```text
-untrusted comment: minisign public key 51439F1DFD014199
-RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
+untrusted comment: minisign public key E679042E15631DD2
+RWTSHWMVLgR55vXnGDw0mtKyUWYt+ZilU9ymoPWDX0MAV69isiBONKVF
 ```
 
 **The secret key** is `~/.config/eider/release.key` (or `$EIDER_RELEASE_KEY`) on the machine
@@ -287,6 +287,10 @@ sh scripts/release-key.sh            # generate the keypair, embed the public ke
 sh scripts/release-key.sh --embed    # embed the existing key's public key again
 sh scripts/release-key.sh --print    # print it
 ```
+
+The key was replaced for 0.7.7 (the first one, `51439F1DFD014199`, signed releases up to 0.7.6; its secret
+half was no longer anywhere: decision C914). An `eider` older than 0.7.7 rejects releases signed by the new key, so it
+is reinstalled once with `install.sh` (`eider self update` cannot do it).
 
 `release-key.sh` refuses to overwrite a key. A new key means a new `eider` for everyone
 (the old one rejects releases signed by another key), so replace it only if it is lost or
@@ -307,7 +311,7 @@ comment names the release being installed, and each download's SHA-256 is the on
 `SHA256SUMS` lists. To check a release by hand:
 
 ```sh
-minisign -Vm SHA256SUMS -P RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
+minisign -Vm SHA256SUMS -P RWTSHWMVLgR55vXnGDw0mtKyUWYt+ZilU9ymoPWDX0MAV69isiBONKVF
 sha256sum -c SHA256SUMS
 ```
 

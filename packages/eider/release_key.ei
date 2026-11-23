@@ -3,6 +3,6 @@
 // (a minisign public key line, or a .pub file), for testing.
 
 /// The minisign public key (its base64 line).
-pub const PUBLIC_KEY: str = "RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl"
+pub const PUBLIC_KEY: str = "RWTSHWMVLgR55vXnGDw0mtKyUWYt+ZilU9ymoPWDX0MAV69isiBONKVF"
 /// Its key id, as minisign prints it.
-pub const KEY_ID: str = "51439F1DFD014199"
+pub const KEY_ID: str = "E679042E15631DD2"

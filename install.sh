@@ -27,7 +27,7 @@
 set -eu
 
 # The release key (minisign public key; scripts/release-key.sh writes this line).
-EIDER_PUBKEY=RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
+EIDER_PUBKEY=RWTSHWMVLgR55vXnGDw0mtKyUWYt+ZilU9ymoPWDX0MAV69isiBONKVF
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 version=latest
