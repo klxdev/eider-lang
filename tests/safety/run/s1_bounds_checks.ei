@@ -1,0 +1,29 @@
+// S1: every index and slice is checked; a failed check traps with a message and a position, it never reads or
+// writes outside the buffer. Each case runs in a contained task and prints what happened.
+fn caught(f: fn() -> i32) -> String uses io {
+    match Task.catch(f) {
+        Ok(v) => String.from("ok")
+        Err(m) => m
+    }
+}
+
+fn main() uses io {
+    let xs: List[i32] = List[1, 2, 3]
+    let arr = [10, 20, 30]
+    let s = String.from("héllo")
+    let n: usize = 3
+    print(caught(|| -> i32 { xs[n] }))
+    print(caught(|| -> i32 { arr[n] }))
+    print(caught(|| -> i32 { s.byte(n + 10) as i32 }))
+    print(caught(|| -> i32 { s.slice(0, n + 10).len() as i32 }))
+    print(caught(|| -> i32 { s.slice(2, 3).len() as i32 }))
+    print(caught(|| -> i32 { let mut ys = xs.copy()
+        ys[n] = 5
+        ys[0] }))
+    print(caught(|| -> i32 { let mut ys = xs.copy()
+        let k = ys.len() + 1
+        ys.remove(k)
+        0 }))
+    // in range: no trap
+    print(caught(|| -> i32 { xs[2] + arr[2] }))
+}

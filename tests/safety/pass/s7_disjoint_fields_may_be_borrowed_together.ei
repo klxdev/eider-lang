@@ -1,0 +1,8 @@
+type Pair = { a: List[i32], b: List[i32] }
+fn fill(inout x: List[i32], inout y: List[i32]) { x.push(1)
+    y.push(2) }
+fn main() uses io {
+    let mut p = Pair(List.new(), List.new())
+    fill(inout p.a, inout p.b)
+    print(p.a.len() + p.b.len())
+}

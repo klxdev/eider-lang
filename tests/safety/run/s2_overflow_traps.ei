@@ -1,0 +1,33 @@
+// S2: arithmetic that overflows traps in every build; `+% -% *%` wrap; `as` is checked; a variable shift count out of
+// range traps; division by a variable zero traps. Nothing wraps or is undefined unless it is written to wrap.
+fn caught(f: fn() -> i64) -> String uses io {
+    match Task.catch(f) {
+        Ok(v) => bytes_text(v)
+        Err(m) => m
+    }
+}
+
+fn bytes_text(v: i64) -> String { String.from_int(v) }
+
+fn main() uses io {
+    let big: i32 = 2147483647
+    let one: i32 = 1
+    let zero: i32 = 0
+    let small: u32 = 3
+    let wide: i64 = 5000000000
+    let cnt: i32 = 40
+    print(caught(|| -> i64 { (big + one) as i64 }))
+    print(caught(|| -> i64 { (zero - one - big - 2) as i64 }))
+    print(caught(|| -> i64 { (big * 2) as i64 }))
+    print(caught(|| -> i64 { (small - 4) as i64 }))
+    print(caught(|| -> i64 { (one / zero) as i64 }))
+    print(caught(|| -> i64 { (one % zero) as i64 }))
+    print(caught(|| -> i64 { (wide as i32) as i64 }))
+    print(caught(|| -> i64 { (one << cnt) as i64 }))
+    // the wrapping operators do not trap
+    print(caught(|| -> i64 { (big +% one) as i64 }))
+    print(caught(|| -> i64 { (zero -% one) as i64 }))
+    print(caught(|| -> i64 { (big *% 2) as i64 }))
+    // in range
+    print(caught(|| -> i64 { (big - one + one) as i64 }))
+}

@@ -1,0 +1,5 @@
+// expect: E0411 4:23
+fn main() {
+    let counts = Ref.new(0)
+    let m = Mutex.new(counts)
+}

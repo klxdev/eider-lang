@@ -1,0 +1,7 @@
+fn main() uses io {
+    let mut i: i32 = 1
+    let start = i
+    i += 1
+    print(start)
+    print(i)
+}

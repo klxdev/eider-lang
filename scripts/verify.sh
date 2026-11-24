@@ -93,6 +93,10 @@ if [ "$1" = "--leg" ]; then
     # part is skipped, with the reason, without a musl sysroot ($EIDER_SYSROOT)
     sh tests/cross/run.sh target/eiderc-next > $S/cross 2>&1 || grep -q "^FAIL" $S/cross || echo "FAIL cross: sh tests/cross/run.sh"
     cat $S/cross
+    # the memory-safety specification's tests (docs/design/memory-safety.md): must-reject and must-accept programs,
+    # run-time behaviour, and every rule having the tests it promises
+    sh tests/safety/run.sh target/eiderc-next > $S/safety 2>&1 || grep -q "^FAIL" $S/safety || echo "FAIL safety: sh tests/safety/run.sh"
+    cat $S/safety
     printf 'int x;\n' > $S/wasm.c
     if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
       sh tests/wasm/run.sh || echo "FAIL tests/wasm"

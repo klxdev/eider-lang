@@ -1,0 +1,20 @@
+end of block
+  plain-b
+  plain-a
+return
+  early-a
+end after a return that did not run
+  early-b
+  early-a
+? on an Err
+  question-a
+? that passes
+  question-b
+  question-a
+continue and break
+  loop
+  loop
+defer runs before the earlier values are dropped
+  defer-b
+  deferred
+  defer-a

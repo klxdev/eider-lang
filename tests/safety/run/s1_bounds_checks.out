@@ -1,0 +1,8 @@
+index out of bounds (tests/safety/run/s1_bounds_checks.ei:15)
+index out of bounds (tests/safety/run/s1_bounds_checks.ei:16)
+index out of bounds (tests/safety/run/s1_bounds_checks.ei:17)
+slice out of bounds (tests/safety/run/s1_bounds_checks.ei:18)
+slice not on a character boundary (tests/safety/run/s1_bounds_checks.ei:19)
+index out of bounds (tests/safety/run/s1_bounds_checks.ei:21)
+index out of bounds (tests/safety/run/s1_bounds_checks.ei:25)
+ok

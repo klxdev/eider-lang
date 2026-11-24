@@ -1,0 +1,9 @@
+// expect: E0308 7:10
+type Row = { id: i32, name: String }
+fn main() uses io {
+    let mut rows: List[Row] = List.new()
+    rows.push(Row(1, String.from("a")))
+    let r = rows[0]
+    rows.clear()
+    print(r.id)
+}

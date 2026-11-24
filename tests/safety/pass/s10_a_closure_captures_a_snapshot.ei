@@ -1,0 +1,6 @@
+fn main() uses io {
+    let mut n: i32 = 1
+    let f = || -> i32 { n + 1 }
+    n = 10
+    print(f())
+}

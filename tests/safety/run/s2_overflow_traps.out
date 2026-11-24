@@ -1,0 +1,12 @@
+integer overflow in + (tests/safety/run/s2_overflow_traps.ei:19)
+integer overflow in - (tests/safety/run/s2_overflow_traps.ei:20)
+integer overflow in * (tests/safety/run/s2_overflow_traps.ei:21)
+integer overflow in - (tests/safety/run/s2_overflow_traps.ei:22)
+division by zero (tests/safety/run/s2_overflow_traps.ei:23)
+remainder by zero (tests/safety/run/s2_overflow_traps.ei:24)
+integer conversion out of range (tests/safety/run/s2_overflow_traps.ei:25)
+shift count out of range (tests/safety/run/s2_overflow_traps.ei:26)
+-2147483648
+-1
+-2
+2147483647

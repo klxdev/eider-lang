@@ -1,0 +1,5 @@
+// expect: E0411 4:12
+fn main() {
+    let r = Ref.new(0)
+    let c: Chan[Ref[i32]] = Chan.new()
+}

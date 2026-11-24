@@ -1,0 +1,8 @@
+// expect: E0308 6:5
+type Row = { id: i32, tags: List[i32] }
+fn main() uses io {
+    let mut row = Row(1, List[1])
+    let t = row.tags
+    row = Row(2, List[2])
+    print(t.len())
+}

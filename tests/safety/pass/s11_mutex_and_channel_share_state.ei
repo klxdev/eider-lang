@@ -1,0 +1,8 @@
+fn main() uses io, threads {
+    let m = Mutex.new(0)
+    m.update(|n| n + 1)
+    let c: Chan[i32] = Chan.new()
+    c.send(5)
+    print(m.get())
+    print(c.recv())
+}

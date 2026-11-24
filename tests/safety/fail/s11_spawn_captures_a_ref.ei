@@ -1,0 +1,6 @@
+// expect: E0411 4:19
+fn main() uses threads {
+    let r = Ref.new(0)
+    let t = spawn(|| -> i32 { r.get() })
+    print(t.join())
+}

@@ -1,0 +1,7 @@
+// expect: E0308 5:8
+fn main() uses io {
+    let mut xs: List[i32] = List[1, 2, 3]
+    let first = xs
+    xs.push(4)
+    print(first.len())
+}

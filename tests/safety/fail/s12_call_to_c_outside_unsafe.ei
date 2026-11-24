@@ -1,0 +1,3 @@
+// expect: E0802 3:32
+extern "c" fn abs(n: i32) -> i32
+fn main() uses io, ffi { print(abs(-1)) }

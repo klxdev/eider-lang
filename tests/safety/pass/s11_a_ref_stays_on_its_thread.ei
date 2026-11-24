@@ -1,0 +1,5 @@
+fn main() uses io {
+    let r = Ref.new(0)
+    r.update(|inout n| { n += 1 })
+    print(r.get())
+}

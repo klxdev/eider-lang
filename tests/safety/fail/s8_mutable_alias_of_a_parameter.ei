@@ -1,0 +1,6 @@
+// expect: E0307 3:17
+fn f(p: List[i32]) {
+    let mut q = p
+    q.push(1)
+}
+fn main() uses io { print(1) }

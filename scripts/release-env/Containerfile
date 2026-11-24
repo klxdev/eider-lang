@@ -1,0 +1,13 @@
+# A Fedora 44 build environment for releasing Eider (the machine that made 0.7.6 was Fedora 44; Fedora 45's
+# glibc breaks ThreadSanitizer's longjmp, so the TSan legs of verify.sh cannot run there).
+FROM docker.io/library/fedora:44
+RUN dnf -y --setopt=install_weak_deps=False install \
+      gcc gcc-c++ make cmake clang lld llvm compiler-rt libasan libubsan libtsan libatomic glibc-devel \
+      nodejs gdb lldb git gh minisign curl tar gzip xz bzip2 which file binutils diffutils findutils \
+      procps-ng openssl e2fsprogs python3 perl patch podman-remote util-linux iproute \
+    && dnf clean all \
+    && ln -sf /usr/bin/podman-remote /usr/local/bin/podman
+# a musl sysroot for the `cross` verify leg (tests/cross): usr/include and usr/lib as clang --sysroot expects
+RUN dnf -y --setopt=install_weak_deps=False install musl-libc-static musl-devel && dnf clean all \
+    && mkdir -p /opt/musl-sysroot/usr && ln -s /usr/x86_64-linux-musl/include /opt/musl-sysroot/usr/include \
+    && ln -s /usr/x86_64-linux-musl/lib64 /opt/musl-sysroot/usr/lib

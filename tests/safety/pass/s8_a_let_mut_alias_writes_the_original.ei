@@ -1,0 +1,6 @@
+fn main() uses io {
+    let mut xs: List[i32] = List[1]
+    let mut a = xs
+    a.push(2)
+    print(xs.len())
+}

@@ -1,0 +1,5 @@
+// expect: E0502 4:15
+fn main() uses io {
+    let x: i32 = 7
+    print(x / 0)
+}

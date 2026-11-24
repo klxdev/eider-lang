@@ -1,0 +1,6 @@
+// expect: E0303 4:5
+fn main() uses io {
+    let xs: List[i32] = List[1]
+    xs.push(2)
+    print(xs.len())
+}

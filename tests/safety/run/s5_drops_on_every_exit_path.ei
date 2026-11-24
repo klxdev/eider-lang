@@ -1,0 +1,69 @@
+// S5: an owned value is dropped exactly once on every way out of its scope: the end of a block, `return`, `?`,
+// `break`, `continue`; `defer` runs with the block's drops, before the values declared ahead of it. A trace of
+// the drops shows each path.
+type Res = { name: str, log: Ref[List[str]] }
+
+impl Drop for Res {
+    fn drop(inout self) {
+        let n = self.name
+        self.log.update(|inout l| l.push(n))
+    }
+}
+
+fn plain(log: Ref[List[str]]) {
+    let a = Res("plain-a", log)
+    let b = Res("plain-b", log)
+}
+
+fn early(log: Ref[List[str]], leave: bool) -> i32 {
+    let a = Res("early-a", log)
+    if leave { return 1 }
+    let b = Res("early-b", log)
+    2
+}
+
+fn question(log: Ref[List[str]], fail: bool) -> Result[i32, String] {
+    let a = Res("question-a", log)
+    let r: Result[i32, String] = if fail { Err(String.from("no")) } else { Ok(3) }
+    let v = r?
+    let b = Res("question-b", log)
+    Ok(v)
+}
+
+fn looped(log: Ref[List[str]]) {
+    for i in 0..3 {
+        let a = Res("loop", log)
+        if i == 0 { continue }
+        if i == 1 { break }
+    }
+}
+
+fn deferred(log: Ref[List[str]]) {
+    let a = Res("defer-a", log)
+    defer log.update(|inout l| l.push("deferred"))
+    let b = Res("defer-b", log)
+}
+
+fn show(label: str, log: Ref[List[str]]) uses io {
+    print(label)
+    for e in log.get() { print("  {e}") }
+    log.set(List.new())
+}
+
+fn main() uses io {
+    let log: Ref[List[str]] = Ref.new(List.new())
+    plain(log)
+    show("end of block", log)
+    early(log, true)
+    show("return", log)
+    early(log, false)
+    show("end after a return that did not run", log)
+    question(log, true)
+    show("? on an Err", log)
+    question(log, false)
+    show("? that passes", log)
+    looped(log)
+    show("continue and break", log)
+    deferred(log)
+    show("defer runs before the earlier values are dropped", log)
+}
