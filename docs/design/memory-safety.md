@@ -56,7 +56,7 @@ The claim depends on all of these being correct. Each has one line on how it is 
 | The C core (`core/eider_rt.c`, `eider_core.c`, `eider_prof.c`) | about 6,900 lines | `tests/core/` (rt_test, core_test, os_test: 637+ checks), ASan+UBSan and TSan builds | **it is C**: no language rule covers it; buffer and count code is the most sensitive (`ei_buf_*`, `ei_str_*`, list growth, map) |
 | The comptime evaluator (`compiler/interp.ei`) | | compile-fail and run tests | an IR interpreter that implements the language a second time |
 | The seed path (`seed/eiderc.wasm`, `wasm2c`) | | the self-host fixed point, byte-for-byte reproducibility | a miscompiled seed is a miscompiled compiler |
-| `unsafe` and `ffi` code | about 180 mentions, **all in `core/`; none in `std/`** | review; per-package `ffi` grants | C can write past the end of a buffer it was given and nothing notices (workstream F) |
+| `unsafe` and `ffi` code | about 180 mentions, **all in `core/`; none in `std/`** | review; per-package `ffi` grants | C can write past the end of a buffer it was given: an overrun of up to 64 bytes in an `inout List[u8]` of a foreign extern is caught when the call returns (canary, `ei_ffi_guard_*`); reads and wild stores are not |
 | libc, the kernel | | | |
 
 ## What is checked, and what is not
@@ -70,7 +70,7 @@ sanitizer runs of the programs the fuzzer's checker accepts; machine-checked buf
 a *proof* that the compiler's list of crossing points is complete (today: handle counts (`Task`, `Mutex`, `Chan`) are atomic;
 buffer counts are not, and every crossing point applies a generated `own_` glue that makes the value deeply unique;
 the crossing points are tested under TSan, `tests/safety/run/s11_crossing_points.ei`, but a point nobody thought of would
-not be); a detector for an FFI overrun; a formal model of the protection rule and copy-on-write.
+not be); a detector for an FFI overrun beyond the canary, for reads, or for buffers C keeps; a formal model of the protection rule and copy-on-write.
 
 ## Where the rules are tested for this specification
 

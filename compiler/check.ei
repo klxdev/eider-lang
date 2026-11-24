@@ -4280,7 +4280,9 @@ fn record_ffi(inout c: C, ii: u32) {
         let mut ps: List[u32] = List.new()
         for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
         let sym = nm(c, n.a)
-        ir.add_extern(inout c.ir, inst.ir, sym, ps, inst.ret)
+        let pk = c.p.mods[f.md as usize].pkg
+        let foreign = pk == resolve.NOPKG || !resolve.toolchain_pkg(c.p, pk)
+        ir.add_extern(inout c.ir, inst.ir, sym, ps, inst.ret, foreign)
     } else {
         // the C interface shows the stem, as programs do (resolve.ei `shown`)
         let name = resolve.key_shown(c.p.names, f.key)

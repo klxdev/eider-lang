@@ -35,6 +35,9 @@ else
   echo "skip safety: the thread crossing points under ThreadSanitizer: ${CC:-cc} cannot run a TSan program that uses longjmp"
 fi
 
+# a C overrun of an inout List[u8] is caught (workstream F)
+sh tests/safety/ffi/run.sh "$E" || fail=1
+
 # rule -> where its tests must be (fail, pass, run); S3 (the type system) and S13 (compiler/tests/run/stack_overflow*.ei,
 # core/RUNTIME.md "Stack overflow") are tested elsewhere
 need() { # rule dirs...

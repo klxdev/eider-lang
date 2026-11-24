@@ -38,7 +38,7 @@ pub fn instrument(inout g: ir.Ir, covered: List[bool], paths: List[List[u8]]) ->
     let hit = ir.declare_fn(inout g, sys.lit("ei_cov_hit"), false)
     let mut ps: List[u32] = List.new()
     ps.push(types.U32)
-    ir.add_extern(inout g, hit, sys.lit("ei_cov_hit"), ps, types.UNIT)
+    ir.add_extern(inout g, hit, sys.lit("ei_cov_hit"), ps, types.UNIT, false)
     let mut st = Cv(List.new(), List.new(), hit, 0)
     for i in 0..g.blocks.len() { st.seen.push(false) }
     for f in 0..n {

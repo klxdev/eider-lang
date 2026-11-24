@@ -27,6 +27,14 @@ The parameter and result types must be *C-safe* (E0803 otherwise):
   made the caller's own, so the bytes C writes are nobody else's. An `export` can't take a
   List (E0803). It is what the core uses to move data across in one call (core/ABI.md "Bulk
   transfer").
+- **A guard against a C overrun.** For an `inout List[u8]` of an extern declared in your own
+  package (not `core` or `std`), the compiler makes sure the buffer has 64 spare bytes after its
+  length, fills them with a known pattern before the call, and checks them when it returns. If C
+  changed them it wrote past the end: the program traps with ``C function `name` wrote past the
+  end of its buffer`` and the source line of the call (a `Task.catch` can contain it) instead of
+  going on with a corrupted heap. This detects a linear overrun of up to 64 bytes after the fact.
+  It does not see a read past the end, a store that skips the pattern, or a write beyond the
+  spare bytes; those are the C code's bugs (docs/design/memory-safety.md, S12).
 
 The program is linked with the C library; other libraries are added with `-l <lib>` on
 `eiderc build`, `run` and `test` (repeatable). A declared function that nothing defines is a

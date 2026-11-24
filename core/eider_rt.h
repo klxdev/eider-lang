@@ -316,6 +316,15 @@ void *ei_buf_alloc(uint64_t n, uint64_t size);
 /* Resizes buffer d (unique, or NULL for a new one) to n * size bytes, keeping its contents
    up to the smaller size; returns the (possibly moved) data. */
 void *ei_buf_grow(void *d, uint64_t n, uint64_t size);
+/* FFI buffer guard (docs/design/memory-safety.md S12). Generated code calls these around a foreign
+   C function (one declared outside core and std) that takes an `inout List[u8]`: begin makes sure
+   the unique buffer has EI_FFI_SLACK spare bytes after its length and fills them with a canary;
+   end traps, naming the function, if the canary changed (C wrote past the end). Detects a linear
+   overrun after the fact, within the slack; it does not see reads or stores that skip the canary. */
+#define EI_FFI_SLACK 64
+typedef struct { uint8_t *p; uint64_t len; uint64_t cap; } ei_ByteList;
+void ei_ffi_guard_begin(ei_ByteList *l);
+void ei_ffi_guard_end(const ei_ByteList *l, const char *fn, uint32_t line);
 /* Frees buffer d (NULL is a no-op), whatever its count: callers free at count zero. */
 void ei_buf_free(void *d);
 /* The amortised capacity for len + extra elements: at least min, doubling cap; traps

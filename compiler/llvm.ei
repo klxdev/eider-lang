@@ -2341,6 +2341,10 @@ fn call_fn(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     let mut args: List[List[u8]] = List.new()
     let mut cptys: List[u32] = List.new()
+    // the buffers a foreign C function may write (`inout List[u8]`): a canary after each, checked
+    // after the call (core/eider_rt.c ei_ffi_guard_*; docs/design/memory-safety.md S12)
+    let foreign = x != NONE && p.ir.externs[x as usize].foreign
+    let mut guarded: List[List[u8]] = List.new()
     for i in 0..s.c {
         let a = p.ir.extra[(s.b + i) as usize]
         let mut pt = NONE
@@ -2351,6 +2355,11 @@ fn call_fn(inout e: E, p: lower.P, s: ir.Stmt) {
             // one the extern may write (`inout`) first becomes the caller's own
             let la = if a >= ir.ARG_PLACE { paddr(inout e, p, a - ir.ARG_PLACE) } else { argptr(inout e, p, a) }
             if a >= ir.ARG_PLACE { uniq_call(inout e, p, pt, la) }
+            if foreign && a >= ir.ARG_PLACE {
+                let none: List[u8] = List.new()
+                call(inout e, p, lit("ei_ffi_guard_begin"), tys1(PTR + pt), args1(la), types.UNIT, none)
+                guarded.push(la)
+            }
             args.push(load_ptr_field(inout e, p, pt, la, 0))
             cptys.push(types.STR)
             args.push(load_i64_field(inout e, p, pt, la, 1))
@@ -2365,6 +2374,14 @@ fn call_fn(inout e: E, p: lower.P, s: ir.Stmt) {
     if s.dst != NONE { d = dst_addr(s.dst) }
     let r = call(inout e, p, name, ptys, args, fd.ret, d)
     if s.dst != NONE && is_scalar(p, fd.ret) && !is_void(fd.ret) { store(inout e, p, fd.ret, r, d) }
+    if guarded.len() > 0 {
+        let none: List[u8] = List.new()
+        let nm = msgb(inout e, name)
+        let ln = line_of(inout e, s.line)
+        for la in guarded {
+            call(inout e, p, lit("ei_ffi_guard_end"), tys3(PTR + types.U8, types.STR, types.U32), args3(la, nm, ln), types.UNIT, none)
+        }
+    }
 }
 
 /// The C ABI of a fn value's `call`: (void *env, params...) -> ret.

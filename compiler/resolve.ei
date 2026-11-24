@@ -1596,7 +1596,7 @@ fn module_with_pre(p: Program, pre: u32) -> u32 {
     NOMOD
 }
 
-fn toolchain_pkg(p: Program, pk: u32) -> bool {
+pub fn toolchain_pkg(p: Program, pk: u32) -> bool {
     let n = p.pkgs[pk as usize].name
     bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std"))
 }

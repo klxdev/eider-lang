@@ -210,6 +210,33 @@ void ei_buf_free(void *d) {
   if (d) ei_free(ei_buf_h(d));
 }
 
+static uint8_t ffi_canary(uint64_t i) { return (uint8_t)(0xA5u ^ (i * 29u)); }
+
+void ei_ffi_guard_begin(ei_ByteList *l) {
+  if (l->cap - l->len < EI_FFI_SLACK) {
+    if (l->len > UINT64_MAX - EI_FFI_SLACK) ei_trap("out of memory", 0);
+    l->p = ei_buf_grow(l->p, l->len + EI_FFI_SLACK, 1);
+    l->cap = l->len + EI_FFI_SLACK;
+  }
+  for (uint64_t i = 0; i < EI_FFI_SLACK; i++) l->p[l->len + i] = ffi_canary(i);
+}
+
+void ei_ffi_guard_end(const ei_ByteList *l, const char *fn, uint32_t line) {
+  for (uint64_t i = 0; i < EI_FFI_SLACK; i++) {
+    if (l->p[l->len + i] != ffi_canary(i)) {
+      const char *fmt = "C function `%s` wrote past the end of its buffer";
+      size_t n = strlen(fmt) + strlen(fn) + 1;
+      char *tmp = malloc(n);
+      if (!tmp) ei_trap("C function wrote past the end of its buffer", (int32_t)line);
+      snprintf(tmp, n, fmt, fn);
+      ei_String s = ei_str_from(tmp); /* the trap owns an Eider String's data */
+      free(tmp);
+      char *m = s.p;
+      ei_trap_owned(m, (int32_t)line);
+    }
+  }
+}
+
 uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
   if (extra > UINT64_MAX - len) ei_trap("out of memory", 0);
   uint64_t need = len + extra;

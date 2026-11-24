@@ -1,0 +1,11 @@
+65
+65
+16
+67
+0
+1040
+C function `fill_over` wrote past the end of its buffer (tests/safety/ffi/overrun.ei:37)
+C function `fill_over` wrote past the end of its buffer (tests/safety/ffi/overrun.ei:40)
+C function `fill_over` wrote past the end of its buffer (tests/safety/ffi/overrun.ei:43)
+65
+0
