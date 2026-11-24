@@ -771,6 +771,7 @@ static bool thread_start_guarded(ei_thread *t) { return thread_start_sized(t, EI
 #include <errno.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <sys/syscall.h>
 #ifdef EI_TASK_UCONTEXT
 #include <ucontext.h>
 typedef ucontext_t ei_ctx;
@@ -857,6 +858,7 @@ struct ei_worker {
   size_t qcap, qhead, qlen;
   ei_thread th;
   atomic_uint_least64_t ticks;
+  int home; /* the reactor shard this worker waits on and polls itself (RX[home]) */
   uint32_t rng;
   uintptr_t glo, ghi; /* the worker thread's own guard, while a task's is set */
   unsigned char *stk_lo;
@@ -895,6 +897,9 @@ static struct {
   int64_t max_tasks;
   size_t stack_size;
 } S = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER, .mon_mu = PTHREAD_MUTEX_INITIALIZER, .mon_cv = PTHREAD_COND_INITIALIZER, .mep = -1, .evfd = -1};
+
+static int nshards; /* reactor shards in use: one per worker, up to EI_SHARDS (sched_init) */
+static ei_task *local_poll(ei_worker *w);
 
 static _Thread_local ei_worker *cur_worker;
 static _Thread_local ei_task *cur_task;
@@ -1239,6 +1244,10 @@ static ei_task *find_task(ei_worker *w) {
     ei_task *t = NULL;
     t = lq_pop(w);
     if (t) return t;
+    /* tasks that waited on this worker's own shard become ready here, with no handoff: they are
+       what a loaded server's connections are, and waking another worker for each costs a futex */
+    t = local_poll(w);
+    if (t) return t;
     atomic_fetch_add(&S.nsearch, 1);
     t = steal(w);
     /* spin a little before sleeping: the next wake-up usually comes within microseconds */
@@ -1305,6 +1314,7 @@ static bool worker_add(void) {
   ei_worker *w = calloc(1, sizeof *w);
   if (!w) return false;
   pthread_mutex_init(&w->qmu, NULL);
+  w->home = nshards > 0 ? n % nshards : 0;
   w->th.run = worker_main;
   w->th.arg = w;
   w->th.task = NULL;
@@ -1658,10 +1668,10 @@ struct reactor {
   fdent *fds;
   size_t nfds;
   atomic_int_least64_t next_dl; /* the earliest timer (ns), INT64_MAX if none */
+  atomic_int nreg;              /* waits registered here and not yet returned: 0 lets a worker skip polling it */
 };
-#define EI_SHARDS 8
+#define EI_SHARDS 64
 static struct reactor RX[EI_SHARDS];
-static int nshards;
 
 static int64_t mono_ns(void) {
   struct timespec t;
@@ -1847,6 +1857,24 @@ static void shard_timers(struct reactor *r, int64_t now) {
   pthread_mutex_unlock(&r->mu);
 }
 
+/* The ready descriptors and due timers of the worker's own shard, without waiting: the first
+   task that became runnable, the rest on the worker's queue (and one more worker is woken for
+   them, which finds them by stealing). NULL when nothing is registered there or ready. */
+static ei_task *local_poll(ei_worker *w) {
+  struct reactor *r = &RX[w->home];
+  if (atomic_load_explicit(&r->nreg, memory_order_relaxed) == 0) return NULL;
+  ei_batch b;
+  b.n = 0;
+  batch_set(&b);
+  shard_poll(r);
+  shard_timers(r, mono_ns());
+  batch_set(NULL);
+  if (b.n == 0) return NULL;
+  for (int i = 1; i < b.n; i++) lq_push(w, b.t[i]);
+  if (b.n > 1) notify_one();
+  return b.t[0];
+}
+
 /* Waits up to timeout_ms (-1: forever) for a descriptor of any reactor or a poke, then completes
    what is ready and what is due; the tasks that become runnable are in b. Any thread may call
    it, also several at a time (registrations are one-shot, a wait completes once). */
@@ -1959,7 +1987,10 @@ static void pk_wake_wait(void *p) {
    and for the parker pk (0: none) to be unparked. Result as ec_fd_wait: the flags, 0 at the
    deadline, -errno; PK_FLAG added when the parker's permit was taken. */
 static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t dl, int64_t pk) {
-  struct reactor *r = &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
+  /* a worker's waits go on its own shard, which it polls itself (local_poll); a task's wait is
+     woken where it parked, so a connection's task stays on its worker */
+  ei_worker *cw = worker_self();
+  struct reactor *r = cw ? &RX[cw->home] : &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
   ei_wait w;
   memset(&w, 0, sizeof w);
   w.task = t;
@@ -1981,6 +2012,7 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
 #ifdef EI_RT_PROFILE
   uint64_t pt0 = prof_conc_on() ? prof_now() : 0;
 #endif
+  atomic_fetch_add_explicit(&r->nreg, 1, memory_order_relaxed);
   if (atomic_fetch_add(&S.nwaits, 1) == 0 && atomic_load(&S.nidle) == 0) mon_wake();
   pthread_mutex_lock(&r->mu);
   if (w.done) goto finish; /* unparked while we were attaching */
@@ -2043,6 +2075,7 @@ finish:
   res = w.result;
   pthread_mutex_unlock(&r->mu);
   atomic_fetch_sub(&S.nwaits, 1);
+  atomic_fetch_sub_explicit(&r->nreg, 1, memory_order_relaxed);
   if (pk) ec_pk_detach(pk, res >= 0 && (res & PK_FLAG) != 0);
 #ifdef EI_RT_PROFILE
   if (pt0) prof_wait(fd >= 0 ? EI_PEV_FD : pk ? EI_PEV_PARK : EI_PEV_SLEEP, prof_now() - pt0 + 1);
@@ -2055,6 +2088,7 @@ failed:
   heap_remove(r, &w);
   pthread_mutex_unlock(&r->mu);
   atomic_fetch_sub(&S.nwaits, 1);
+  atomic_fetch_sub_explicit(&r->nreg, 1, memory_order_relaxed);
   if (pk) ec_pk_detach(pk, 0);
 #ifdef EI_RT_PROFILE
   if (pt0) prof_wait(fd >= 0 ? EI_PEV_FD : pk ? EI_PEV_PARK : EI_PEV_SLEEP, prof_now() - pt0 + 1);
@@ -2144,6 +2178,7 @@ static void sched_atfork_child(void) {
     if (had && r->ep >= 0) close(r->ep);
     r->ep = -1;
     atomic_store(&r->next_dl, INT64_MAX);
+    atomic_store(&r->nreg, 0);
     r->hn = 0;
     r->nfds = 0;
     free(r->fds);
@@ -2175,6 +2210,18 @@ static void sched_atfork_child(void) {
 
 /* Starts the workers and the reactor (once). S.on says whether tasks are in use: not with
    EIDER_TASKS=threads, or if the system refused anything. */
+/* How many CPUs this process may run on (its affinity mask: a taskset, a container's cpuset), 0 if
+   unknown. Through the system call itself: sched_getaffinity needs _GNU_SOURCE, which this file
+   leaves off. */
+static long affinity_cpus(void) {
+  unsigned long m[16]; /* 1024 CPUs */
+  long n = syscall(SYS_sched_getaffinity, 0, sizeof m, m);
+  if (n <= 0) return 0;
+  long c = 0;
+  for (size_t i = 0; i < (size_t)n / sizeof m[0]; i++) c += __builtin_popcountl(m[i]);
+  return c;
+}
+
 static void sched_init(void) {
   static bool atfork_set;
   if (!atfork_set) {
@@ -2183,7 +2230,13 @@ static void sched_init(void) {
   }
   const char *mode = getenv("EIDER_TASKS");
   if (mode && strcmp(mode, "threads") == 0) return;
+  /* the CPUs this process may run on (a taskset, a container's cpuset), not the machine's: more
+     workers than that only take turns on the same CPUs */
   long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  {
+    long a = affinity_cpus();
+    if (a > 0 && a < cpus) cpus = a;
+  }
   int nw = (int)env_int("EIDER_WORKERS", cpus < 4 ? 4 : (cpus > 64 ? 64 : cpus));
   if (nw > EI_MAX_WORKERS) nw = EI_MAX_WORKERS;
   int maxw = (int)env_int("EIDER_WORKERS_MAX", 256);
@@ -2193,7 +2246,7 @@ static void sched_init(void) {
   S.max_tasks = env_int("EIDER_TASK_MAX", 1000000);
   S.stack_size = (size_t)env_int("EIDER_TASK_STACK", (int64_t)EI_THREAD_STACK);
   if (S.stack_size < ((size_t)64 << 10)) S.stack_size = (size_t)64 << 10;
-  nshards = nw / 2 < 1 ? 1 : (nw / 2 > EI_SHARDS ? EI_SHARDS : nw / 2);
+  nshards = nw < 1 ? 1 : (nw > EI_SHARDS ? EI_SHARDS : nw);
   for (int k = 0; k < EI_SHARDS; k++) {
     struct reactor *r = &RX[k];
     r->ep = -1;

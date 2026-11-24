@@ -76,39 +76,34 @@ pub fn rfind_byte(s: List[u8], b: u8) -> Option[usize] {
 
 /// s[start..end], clamped to the end of `s`.
 pub fn slice(s: List[u8], start: usize, end: usize) -> List[u8] {
-    let mut out: List[u8] = List.new()
     let stop = if end < s.len() { end } else { s.len() }
-    let mut i = start.copy()
-    while i < stop {
-        out.push(s[i])
-        i += 1
-    }
-    out
+    if start >= stop { return List.new() }
+    s.slice(start, stop)
 }
 
 pub fn append(inout dst: List[u8], src: List[u8]) {
-    for b in src { dst.push(b) }
+    dst.extend(src)
 }
 
 pub fn concat(a: List[u8], b: List[u8]) -> List[u8] {
     let mut out = a.copy()
-    append(inout out, b)
+    out.extend(b)
     out
 }
 
 /// Split at every `sep`; always returns at least one part.
 pub fn split(s: List[u8], sep: u8) -> List[List[u8]] {
     let mut parts: List[List[u8]] = List.new()
-    let mut cur: List[u8] = List.new()
-    for b in s {
-        if b == sep {
-            parts.push(cur)
-            cur = List.new()
-        } else {
-            cur.push(b)
+    let mut from: usize = 0
+    let mut i: usize = 0
+    while i < s.len() {
+        if s[i] == sep {
+            parts.push(s.slice(from, i))
+            from = i + 1
         }
+        i += 1
     }
-    parts.push(cur)
+    parts.push(s.slice(from, s.len()))
     parts
 }
 

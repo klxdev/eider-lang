@@ -35,17 +35,9 @@ extern "c" fn ec_str_len(s: str) -> i64
 extern "c" fn ec_errstr(e: i64)
 extern "c" fn ec_exit(code: i32)
 
-/// The bytes of a string literal.
-pub fn lit(s: str) -> List[u8] uses ffi {
-    let mut out: List[u8] = List.new()
-    let n = unsafe { ec_str_len(s) }
-    let mut i: i64 = 0
-    while i < n {
-        let b = unsafe { ec_str_byte(s, i) }
-        out.push(b as u8)
-        i += 1
-    }
-    out
+/// The bytes of a string literal (one native copy: a program builds many of them per request).
+pub fn lit(s: str) -> List[u8] {
+    s.bytes()
 }
 
 /// Bytes -> String (for `print`). Stops at a NUL byte, like every C string.

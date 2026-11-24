@@ -1,0 +1,50 @@
+// std/bytes: slice (clamped), append, concat, split and join, and sys.lit: the operations the
+// HTTP code builds every message from.
+
+import core.sys
+import std.bytes
+import std.io
+
+fn show(b: List[u8]) uses io, ffi { io.outln(b) }
+
+fn parts(ps: List[List[u8]]) -> String uses ffi {
+    let mut s = String.from("")
+    for i in 0..ps.len() {
+        if i > 0 { s.push_str("|") }
+        s.push_str("[")
+        s.append(sys.to_string(ps[i]))
+        s.push_str("]")
+    }
+    s
+}
+
+fn main() uses io, ffi {
+    let a = sys.lit("hello world")
+    show(bytes.slice(a, 0, 5))
+    show(bytes.slice(a, 6, 11))
+    show(bytes.slice(a, 6, 99))
+    print(bytes.slice(a, 11, 20).len())
+    print(bytes.slice(a, 20, 30).len())
+    print(bytes.slice(a, 5, 5).len())
+    print(bytes.slice(a, 7, 3).len())
+    print(bytes.slice(sys.lit(""), 0, 0).len())
+    let mut d = sys.lit("ab")
+    bytes.append(inout d, sys.lit("cd"))
+    bytes.append(inout d, sys.lit(""))
+    show(d)
+    let e = d.copy()
+    bytes.append(inout d, e)
+    show(d)
+    show(e)
+    show(bytes.concat(sys.lit("x"), sys.lit("yz")))
+    show(bytes.concat(sys.lit(""), sys.lit("")))
+    print(parts(bytes.split(sys.lit("a,b,,c"), 44)))
+    print(parts(bytes.split(sys.lit(""), 44)))
+    print(parts(bytes.split(sys.lit(","), 44)))
+    print(parts(bytes.split(sys.lit("abc"), 44)))
+    print(parts(bytes.split(sys.lit("a,b,"), 44)))
+    show(bytes.join(bytes.split(sys.lit("1.2.3"), 46), sys.lit(", ")))
+    print(sys.lit("").len())
+    print(sys.lit("héllo").len())
+    print(bytes.eq(sys.lit("abc"), sys.lit("abc")))
+}

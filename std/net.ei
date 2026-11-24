@@ -258,6 +258,18 @@ pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net {
     Ok(n)
 }
 
+/// `send` on a non-blocking socket: None when the send buffer is full (wait for writability, then
+/// try again), else the number of bytes sent.
+pub fn try_send(s: i32, data: List[u8]) -> Result[Option[i64], String] uses net {
+    sys.send(data)
+    let n = os.sock_send(s)
+    if n < 0 {
+        if fd.would_block(n) { return Ok(None) }
+        return Err(error("send", n))
+    }
+    Ok(Some(n))
+}
+
 /// Send all of `data` (blocking sockets).
 pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net {
     let mut rest = data.copy()

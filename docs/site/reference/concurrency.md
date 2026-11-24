@@ -67,7 +67,7 @@ the last handle on the task's own thread traps (`cannot join a thread`).
 
 A task is a function running on a stack of its own (8 MiB of address space, of which only the
 touched pages are memory: a task that is parked holds about 5 KiB). The runtime runs tasks on
-a pool of worker threads (`EIDER_WORKERS`, default the number of CPUs, at least 4), takes
+a pool of worker threads (`EIDER_WORKERS`, default the number of CPUs the process may run on, at least 4), takes
 tasks from one worker's queue for another that has none, and parks a task that has to wait:
 `Chan.recv` (and so `Lock`, `select`, groups, pools), `join`, sleeping and waiting for a
 descriptor (`std/fd`, `std/stream`) switch back to the worker, which runs another task. The

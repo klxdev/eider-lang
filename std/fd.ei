@@ -5,6 +5,7 @@
 import core.sys
 import core.os
 import std.time
+import std.sync
 
 /// Open flags: one access mode, plus any of the others.
 pub const READ: i32 = 0
@@ -112,6 +113,25 @@ pub fn wait_ready(fd: i32, interest: i32, dl: time.Deadline) -> Result[bool, Str
         if dl.expired() { return Ok(false) }
     }
     Ok(false)
+}
+
+/// What `wait_ready_or_unpark` ended with.
+pub type Woke = | FdReady | Unparked | DeadlinePassed
+
+/// Waits until `fd` is ready for `interest`, the parker `p` is unparked (a permit left before the
+/// wait counts, and is taken), or `dl` passes. The way a connection waits for its socket and for
+/// its server's stop signal at once: one registration with the poller (`wait_ready2` with a
+/// descriptor for the signal needs two), and the signal is `p.unpark()` from any thread. In a
+/// thread it is a poll plus the parker's wait. Cancel-safe: it only waits.
+pub fn wait_ready_or_unpark(fd: i32, interest: i32, p: sync.Parker, dl: time.Deadline) -> Result[Woke, String] uses io, clock {
+    while true {
+        let n = os.fd_wait_ev(fd, interest, p.h, dl.timeout_ms())
+        if n < 0 { return Err(error("wait", n)) }
+        if (n & 255) != 0 { return Ok(FdReady) }
+        if n != 0 { return Ok(Unparked) }
+        if dl.expired() { return Ok(DeadlinePassed) }
+    }
+    Ok(DeadlinePassed)
 }
 
 /// What `wait_ready2` saw: the readiness flags of each descriptor (1 readable, 2 writable,

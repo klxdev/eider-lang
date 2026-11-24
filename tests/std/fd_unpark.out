@@ -1,0 +1,8 @@
+nothing: deadline
+permit left before: unparked
+permit taken: deadline
+readable: fd
+task: unparked deadline
+task fd: fd
+done
+exit 0

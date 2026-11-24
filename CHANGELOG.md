@@ -5,6 +5,17 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## Unreleased
+
+Throughput of task-based servers (eider-http against axum, same machine: 33% to about parity; eider-http's CHANGELOG has the numbers).
+
+- **Scheduler: a worker polls its own reactor shard.** There is one reactor shard per worker (up to 64; it was up to 8, by descriptor number), a task's descriptor and timer waits go on the shard of the worker it runs on, and a worker whose queue is empty polls that shard without waiting before it steals or sleeps. A task woken by its own worker's poll runs there, so a loaded server's connection tasks stay on their workers and no longer cost a futex wake-up and a hand-off each (about 22 futex calls per request down to under 1). The poller and the monitor still poll every shard. No API change; waits, timers, parkers, cancellation and the task dump behave as before. core/RUNTIME.md.
+- **`EIDER_WORKERS` defaults to the CPUs the process may run on** (its affinity mask: `taskset`, a container's cpuset) instead of the machine's; at least 4 and at most 64 as before. A process not restricted to some of the CPUs sees no change. Setting `EIDER_WORKERS` still wins. (A cgroup CPU quota is not an affinity mask and is not counted.)
+- **`sys.lit` and `std/bytes` are native bulk operations.** `sys.lit` is `s.bytes()` (it pushed one byte per FFI call), `bytes.slice`, `append`, `concat` and `split` use `List.slice` and `List.extend`. Same results (tests/std/bytes_ops.ei, checked against 0.7.6's); every program that builds byte strings is faster.
+- **`fd.wait_ready_or_unpark(fd, interest, parker, dl)`** (new): a descriptor, a `sync.Parker`'s unpark (a permit left before is taken) or a deadline; `Woke` is `FdReady | Unparked | DeadlinePassed`. One registration with the poller in a task. For a task that waits on a socket and on a signal from other threads without a descriptor for the signal.
+- **`net.try_send(sock, data)`** (new): `send` on a non-blocking socket, `None` when the send buffer is full.
+- Tests: tests/std/fd_unpark.ei (a thread and a task), net_try_send.ei, bytes_ops.ei.
+
 ## 0.7.7
 
 **The release key changed** (decision C914): releases from 0.7.7 are signed with key `E679042E15631DD2`; the first key's secret half

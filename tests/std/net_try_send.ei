@@ -1,0 +1,68 @@
+// std/net.try_send: a send on a non-blocking socket that says None when the send buffer is full,
+// instead of an error, and works again once the peer has read.
+
+import core.sys
+import std.bytes
+import std.fd
+import std.net
+import std.time
+
+fn run() -> Result[bool, String] uses io, net, clock, ffi {
+    let ls = net.listener(net.ipv4(127, 0, 0, 1, 0), false)?
+    let port = net.local_addr(ls)?.port
+    let c = net.socket(net.IPV4, net.STREAM, false)?
+    net.connect(c, net.ipv4(127, 0, 0, 1, port))?
+    // the sender is the accepted socket, made non-blocking; the reader is the blocking client
+    let s = match net.accept(ls, true)? {
+        Some(a) => a.fd
+        None => { return Err(String.from("no connection")) }
+    }
+    net.set_option(s, net.SEND_BUFFER, 4096)?
+    let chunk: List[u8] = List.filled(120, 4096)
+    // the first send fits
+    match net.try_send(s, sys.lit("hello"))? {
+        Some(n) => print("sent {n}")
+        None => print("blocked at once")
+    }
+    // fill the buffers until a send would block
+    let mut total: i64 = 0
+    let mut blocked = false
+    let mut rounds = 0
+    while !blocked && rounds < 100000 {
+        match net.try_send(s, chunk)? {
+            Some(n) => { total += n }
+            None => { blocked = true }
+        }
+        rounds += 1
+    }
+    print("filled and then would block: {blocked}, sent something first: {total > 0}")
+    // the peer reads some: the socket becomes writable and a send goes through again
+    let mut got: i64 = 5
+    let first = net.recv(c, 5)?
+    print(first.len())
+    let mut again = false
+    let mut tries = 0
+    while !again && tries < 1000 {
+        let r = net.recv(c, 65536)?
+        got += r.len() as i64
+        if fd.wait_ready(s, fd.READY_WRITE, time.after_ms(50))? {
+            match net.try_send(s, sys.lit("more"))? {
+                Some(n) => { again = true }
+                None => {}
+            }
+        }
+        tries += 1
+    }
+    print("sends again after the peer reads: {again}")
+    fd.close(c)?
+    fd.close(s)?
+    fd.close(ls)?
+    Ok(true)
+}
+
+fn main() uses io, net, clock, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(e) => print(e)
+    }
+}

@@ -1,0 +1,78 @@
+// std/fd.wait_ready_or_unpark: a descriptor, a parker's unpark, or a deadline, whichever comes
+// first, in a thread and in a task (a task's wait is one registration with the poller; an unpark
+// from another thread ends it at once, and one left before the wait is taken by it).
+
+import core.sys
+import std.fd
+import std.sync
+import std.task
+import std.time
+
+fn name(w: fd.Woke) -> str {
+    match w {
+        fd.FdReady => "fd"
+        fd.Unparked => "unparked"
+        fd.DeadlinePassed => "deadline"
+    }
+}
+
+fn once(p: fd.Pair, pk: sync.Parker, ms: i64) -> str uses io, clock {
+    match fd.wait_ready_or_unpark(p.r, fd.READY_READ, pk, time.after_ms(ms)) {
+        Ok(w) => name(w)
+        Err(e) => "error"
+    }
+}
+
+fn in_thread() uses io, clock {
+    let p = fd.pipe().unwrap()
+    let pk = sync.parker()
+    print("nothing: {once(p, pk, 20)}")
+    pk.unpark()
+    print("permit left before: {once(p, pk, 1000)}")
+    print("permit taken: {once(p, pk, 20)}")
+    let z = fd.write_all(p.w, sys.lit("x"))
+    print("readable: {once(p, pk, 1000)}")
+    let r = fd.read(p.r, 10)
+    pk.close()
+    let a = fd.close(p.r)
+    let b = fd.close(p.w)
+}
+
+fn in_task() uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let pk = sync.parker()
+    let pr = p
+    let waiter = spawn(|| -> String {
+        // parked in the poller until the other side unparks: the deadline is far away
+        let first = once(pr, pk, 10000)
+        let second = once(pr, pk, 30)
+        "{first} {second}"
+    })
+    let waker = spawn(|| -> i64 {
+        time.sleep_ms(100)
+        pk.unpark()
+        0
+    })
+    print("task: {waiter.join()}")
+    let z = waker.join()
+    // and the descriptor first
+    let waiter2 = spawn(|| -> String { String.from(once(pr, pk, 10000)) })
+    let writer = spawn(|| -> i64 {
+        time.sleep_ms(100)
+        match fd.write_all(pr.w, sys.lit("y")) {
+            Ok(n) => 0
+            Err(e) => 1
+        }
+    })
+    print("task fd: {waiter2.join()}")
+    let w = writer.join()
+    pk.close()
+    let a = fd.close(p.r)
+    let b = fd.close(p.w)
+}
+
+fn main() uses io, clock, threads {
+    in_thread()
+    in_task()
+    print("done")
+}
