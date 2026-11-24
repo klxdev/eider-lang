@@ -1,0 +1,53 @@
+// S12: C that writes past the end of the buffer it was given is caught when the call returns (a canary placed after the
+// buffer), and the program stops with a trap that names the function, instead of going on with a corrupted heap.
+// What it cannot see: a read past the end, and a store that skips the canary (documented in memory-safety.md).
+extern "c" fn fill_ok(inout buf: List[u8])
+extern "c" fn fill_half(inout buf: List[u8])
+extern "c" fn fill_over(inout buf: List[u8], over: i64)
+extern "c" fn sum_bytes(buf: List[u8]) -> u64
+
+fn buffer(n: usize) -> List[u8] {
+    let mut b: List[u8] = List.new()
+    for i in 0..n { b.push(0) }
+    b
+}
+
+fn caught(f: fn() -> i32) -> String uses io {
+    match Task.catch(f) {
+        Ok(v) => String.from("ok")
+        Err(m) => m
+    }
+}
+
+fn main() uses io, ffi {
+    // correct C passes, and its writes are visible
+    let mut a = buffer(16)
+    unsafe { fill_ok(inout a) }
+    print(a[0])
+    print(a[15])
+    print(a.len())
+    let mut h = buffer(16)
+    unsafe { fill_half(inout h) }
+    print(h[7])
+    print(h[8])
+    // a read-only list is passed as it is
+    print(unsafe { sum_bytes(a) })
+    // an overrun of 1, 8 and 15 bytes (inside the canary) is caught, and names the function
+    print(caught(|| -> i32 { let mut b = buffer(16)
+        unsafe { fill_over(inout b, 1) }
+        0 }))
+    print(caught(|| -> i32 { let mut b = buffer(16)
+        unsafe { fill_over(inout b, 8) }
+        0 }))
+    print(caught(|| -> i32 { let mut b = buffer(5)
+        unsafe { fill_over(inout b, 15) }
+        0 }))
+    // an exact fill of a buffer with no spare capacity (a fresh 1-byte list) is fine
+    let mut one = buffer(1)
+    unsafe { fill_ok(inout one) }
+    print(one[0])
+    // an empty list
+    let mut none = buffer(0)
+    unsafe { fill_ok(inout none) }
+    print(none.len())
+}

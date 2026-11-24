@@ -276,6 +276,29 @@ void ei_list_close(void *data, uint64_t *len, uint64_t at, uint64_t n, uint64_t 
 
 // ---- String
 
+/* Internal invariants (docs/design/c-core-audit.md "Invariants"): checked in builds with -DEI_RT_CHECK_INVARIANTS (the sanitizer,
+   hardened and fuzzing configurations), free otherwise. A violation is a bug in the runtime, never in a program. */
+#ifdef EI_RT_CHECK_INVARIANTS
+#define EI_INV(c) \
+  do { \
+    if (!(c)) { \
+      fflush(stdout); \
+      fprintf(stderr, "eider: internal invariant violated: %s (%s:%d)\n", #c, __FILE__, __LINE__); \
+      abort(); \
+    } \
+  } while (0)
+#else
+#define EI_INV(c) ((void)0)
+#endif
+
+/* I1: a null buffer means an empty String, len <= cap, and the buffer ends in a NUL after len bytes. */
+static void inv_string(const ei_String *s) {
+  (void)s;
+  EI_INV(s->p != NULL || (s->len == 0 && s->cap == 0));
+  EI_INV(s->len <= s->cap);
+  EI_INV(s->p == NULL || s->p[s->len] == 0);
+}
+
 /* A new String holding t[0..tl) with room for cap bytes (cap >= tl). */
 static ei_String str_new(const char *t, uint64_t tl, uint64_t cap) {
   if (cap == UINT64_MAX) ei_trap("out of memory", 0);
@@ -300,6 +323,8 @@ ei_String ei_str_from_i64(int64_t v) {
 }
 
 void ei_drop_String(ei_String *s) {
+  inv_string(s);
+  EI_INV(s->p == NULL || ei_buf_count(s->p) >= 1); /* I3 */
   if (ei_buf_dec(s->p)) ei_buf_free(s->p);
   s->p = NULL;
   s->len = 0;
@@ -312,9 +337,13 @@ ei_String ei_share_String(const ei_String *s) {
   return r;
 }
 
-ei_String ei_clone_String(const ei_String *s) { return str_new(s->p, s->len, s->len); }
+ei_String ei_clone_String(const ei_String *s) {
+  inv_string(s);
+  return str_new(s->p, s->len, s->len);
+}
 
 void ei_str_unique(ei_String *s) {
+  inv_string(s);
   if (!ei_buf_shared(s->p)) return;
 #ifdef EI_RT_PROFILE
   ei_prof_ev(EI_PEV_COW, s->cap + 1);
@@ -327,6 +356,7 @@ void ei_str_unique(ei_String *s) {
 /* Appends t[0..tl): in place when s's buffer is its own and has room, otherwise into a new
    buffer of amortised capacity, made before the old one is let go (so t may point into s). */
 void ei_str_cat(ei_String *s, const char *t, uint64_t tl) {
+  inv_string(s);
   uint64_t cap = tl <= s->cap - s->len ? s->cap : ei_grow_cap(s->cap, s->len, tl, 15);
   if (s->p && cap == s->cap && !ei_buf_shared(s->p)) {
     if (tl) memmove(s->p + s->len, t, (size_t)tl);
@@ -341,6 +371,7 @@ void ei_str_cat(ei_String *s, const char *t, uint64_t tl) {
   }
   s->len += tl;
   s->p[s->len] = 0;
+  inv_string(s);
 }
 
 void ei_str_push(ei_String *s, const char *t) { ei_str_cat(s, t, (uint64_t)strlen(t)); }

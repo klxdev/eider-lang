@@ -1,0 +1,105 @@
+// S11: a value reaches another thread only through a crossing point (a spawn capture, `Chan.send`, `Mutex.set`/`get`/
+// `update`, a `Task`'s result), and the compiler makes it deeply unique there, so no copy-on-write buffer, and no
+// reference count (which is not atomic), is ever shared by two threads. Each case keeps using and changing the value on
+// this side while the other thread uses its own: under ThreadSanitizer (the release container) any sharing is a race.
+type Doc = { name: String, tags: List[String], index: Map[String, List[i32]] }
+
+fn make(n: i32) -> Doc {
+    let mut index: Map[String, List[i32]] = Map.new()
+    index.insert(String.from("a"), List[1, 2, 3])
+    index.insert(String.from("b"), List[n])
+    Doc(String.from("doc"), List[String.from("t1"), String.from("t2")], index)
+}
+
+fn weight(d: Doc) -> usize {
+    let mut w = d.name.len() + d.tags.len()
+    for t in d.tags { w += t.len() }
+    for k in d.index.keys() { w += k.len() }
+    w
+}
+
+fn main() uses io, threads {
+    // 1. a spawn capture: the child reads its snapshot while the parent changes the original
+    let mut d = make(1)
+    let t1 = spawn(|| -> usize {
+        let mut total: usize = 0
+        for i in 0..3000 { total += weight(d) }
+        total
+    })
+    for i in 0..3000 {
+        d.tags.push(String.from("x"))
+        d.name.push_str("y")
+    }
+    print(t1.join())
+    print(weight(d))
+
+    // 2. Chan: what is sent is the receiver's own; the sender goes on changing the original
+    let c: Chan[Doc] = Chan.new()
+    let mut s = make(2)
+    let rx = spawn(|| -> usize {
+        let mut seen: usize = 0
+        for i in 0..50 {
+            match c.recv() {
+                Some(v) => {
+                    let mut mine = v.copy()
+                    mine.tags.push(String.from("r"))
+                    seen += weight(mine)
+                }
+                None => {}
+            }
+        }
+        seen
+    })
+    for i in 0..50 {
+        c.send(s.copy())
+        s.tags.push(String.from("s"))
+    }
+    print(rx.join())
+    print(weight(s))
+
+    // 3. Mutex: every thread that gets the value gets its own copy and changes it freely
+    let m = Mutex.new(make(3))
+    let mut ts: List[Task[usize]] = List.new()
+    for k in 0..4 {
+        ts.push(spawn(|| -> usize {
+            let mut sum: usize = 0
+            for i in 0..500 {
+                let mut mine = m.get()
+                mine.tags.push(String.from("m"))
+                sum += weight(mine)
+            }
+            sum
+        }))
+    }
+    m.set(make(4))
+    for t in ts { print(t.join() > 0) }
+    print(weight(m.get()))
+
+    // 4. a Task's result: built from a captured value, handed to the parent, which then changes it
+    let base = make(5)
+    let t4 = spawn(|| -> Doc {
+        let mut r = base.copy()
+        r.tags.push(String.from("child"))
+        r
+    })
+    let mut got = t4.join()
+    got.tags.push(String.from("parent"))
+    print(weight(got))
+    print(weight(base))
+
+    // 5. many threads capture the same value; every one of them, and this thread, uses it at once
+    let shared = make(6)
+    let mut readers: List[Task[usize]] = List.new()
+    for k in 0..6 {
+        readers.push(spawn(|| -> usize {
+            let mut w: usize = 0
+            for i in 0..2000 { w += weight(shared) }
+            w
+        }))
+    }
+    let mut here: usize = 0
+    for i in 0..2000 { here += weight(shared) }
+    let mut all = true
+    for r in readers { if r.join() != here { all = false } }
+    print(all)
+}

@@ -277,7 +277,8 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     }
     let e = compile(o.eiderc, "emit-llvm", false, path, none)?
     if c.code == 0 {
-        if e.code != 0 { return Ok(verdict("emit-llvm (fails where check succeeds)", e, none)) }
+        // a module with no `main` (`// mode: test`, a library) is accepted by `check` since 0.4.0 (#140); emit-llvm of it is E0112
+        if e.code != 0 && !reports(e.err, sys.lit("E0112")) { return Ok(verdict("emit-llvm (fails where check succeeds)", e, none)) }
     } else {
         if e.code != 1 || !reports(e.err, code) {
             let mut d = sys.lit("check: ")
@@ -287,7 +288,9 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     }
     // an `extern "c"` fn may name a symbol nothing defines, and calling one is unmanaged code
     if c.code == 0 && has(src, "extern") { st.foreign += 1 }
-    if c.code == 0 && !has(src, "extern") {
+    // (nor is a module with no `main` built or run: emit-llvm said E0112 above)
+    let library = e.code != 0 && reports(e.err, sys.lit("E0112"))
+    if c.code == 0 && !has(src, "extern") && !library {
         let b = compile(o.eiderc, "build", false, path, bin)?
         if b.code != 0 { return Ok(verdict("build (a checked program does not build)", b, none)) }
         st.built += 1
@@ -297,6 +300,13 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
         let r = exec(a, 10000)?
         if r.code == -1 {
             st.slow += 1
+        } else if r.code == 77 && bytes.find(r.err, sys.lit("stack-overflow"), 0).is_some() {
+            // unbounded recursion: a defined crash (core/RUNTIME.md "Stack overflow"), counted with the SIGSEGVs
+            st.segv += 1
+        } else if r.code == 77 {
+            // SAN=1 (scripts/fuzz-check.sh): ASan or UBSan ends the program with exit code 77, which no trap uses (101).
+            // A program the checker accepted must never do that: it is a soundness bug (docs/design/soundness-policy.md)
+            return Ok(verdict("run (a sanitizer reported undefined behaviour in a program the checker accepted: a SOUNDNESS BUG)", r, none))
         } else if r.code == 139 {
             st.segv += 1
         } else if r.code > 128 {

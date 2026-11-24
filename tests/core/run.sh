@@ -113,6 +113,10 @@ sanitizer() {
 }
 
 run O2 -O2
+# the hardening a distribution applies (glibc's checked string and memory functions, stack canaries, stack-clash probes):
+# a buffer overrun the sanitizer builds miss in an optimised build still aborts here (docs/design/memory-safety.md, D)
+run hardened -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -DEI_RT_CHECK_INVARIANTS
+core hardened -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -DEI_RT_CHECK_INVARIANTS
 run portable -O0 -DEI_RT_PORTABLE
 run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
@@ -124,7 +128,7 @@ task ucontext -O2 -DEI_TASK_UCONTEXT
 prof count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE
-sanitizer asan+ubsan -fsanitize=address,undefined -fno-sanitize-recover=undefined
+sanitizer asan+ubsan -fsanitize=address,undefined -fno-sanitize-recover=undefined -DEI_RT_CHECK_INVARIANTS
 sanitizer tsan -fsanitize=thread
 # the task test with the ucontext switch (what AArch64 uses) under the sanitizers: it found a
 # thread-local used across a park in ec_poll_wait on x86-64 (#204)

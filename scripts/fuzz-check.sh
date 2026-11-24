@@ -8,6 +8,9 @@
 #   scripts/fuzz-check.sh [count] [seed files...]     (default 500)
 #   SEED=n MODE=semantic|wild EIDERC=<binary> REF=<binary>|none   (REF default: target/eiderc,
 #   the seed itself, so a compiler/ change shows every diagnostic it moves)
+#   SAN=1   build every accepted mutant with ASan+UBSan and run it: a sanitizer report (exit code 77) on a program the
+#           checker accepted is a soundness bug (docs/design/memory-safety.md, soundness-policy.md); SAN=thread adds
+#           nothing yet (single-threaded mutants). Slower: each mutant is built with the sanitizers.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root" || exit 1
 # the mutants' builds get a cache of their own, removed afterwards
@@ -25,6 +28,12 @@ if [ -z "$EIDERC" ]; then
   if [ ! -x "$eiderc" ] || [ -n "$newest" ]; then
     EIDER_CACHE=off "$root/scripts/ei" build "$root/compiler/main.ei" -o "$eiderc" >/dev/null 2>"$root/target/eiderc.build.log" || { cat "$root/target/eiderc.build.log"; exit 3; }
   fi
+fi
+if [ -n "$SAN" ]; then
+  # only now: the fuzzer and the compiler above are built without the sanitizers
+  EIDER_CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -g -DEI_RT_CHECK_INVARIANTS"; export EIDER_CFLAGS
+  ASAN_OPTIONS="exitcode=77:detect_leaks=0:abort_on_error=0:allocator_may_return_null=1"; export ASAN_OPTIONS
+  UBSAN_OPTIONS="exitcode=77:halt_on_error=1:print_stacktrace=1"; export UBSAN_OPTIONS
 fi
 "$bin" "$@"
 code=$?

@@ -41,7 +41,7 @@ Each rule has an ID, the mechanism that enforces it, and its tests (files in `te
 | S8 | A write to a place requires `let mut`, a writable parameter or an `inout`; a mutable alias cannot be made of a read-only place | E0303, E0307 | 28 + 8 |
 | S9 | The **protection rule**: while a read-only reference is used later, no write may change what it names | E0308 | 35 |
 | S10 | A closure captures a snapshot; one that runs before its call returns captures by reference; a closure that would capture a reference and outlive it is rejected | E0308 (closure capture), the checker | `e0308_closure_captures_reference.ei` and others |
-| S11 | Threads share mutable state only through `Mutex[T]` and `Chan[T]`; a value sent to a thread is moved or made unique first, so no reference count is shared by two threads; a `Ref` cannot cross (E0411) | the checker (E0411) + the runtime (uniqueness before crossing, `core/RUNTIME.md` "Threads") | 6 (E0411); `tests/run/threads.ei`; the TSan leg |
+| S11 | Threads share mutable state only through `Mutex[T]` and `Chan[T]`; a value sent to a thread is moved or made unique first, so no reference count is shared by two threads; a `Ref` cannot cross (E0411) | the checker (E0411) + the runtime (uniqueness before crossing, `core/RUNTIME.md` "Threads") | 6 (E0411); `tests/safety/fail/s11_*`; `tests/safety/run/s11_crossing_points.ei` (every crossing point, under TSan where it works: 6 runs clean in the Fedora 44 container); `tests/run/threads.ei` |
 | S12 | C is called only from a package granted `ffi`, inside `unsafe`, with C-safe types; a `List[u8]` goes to C as pointer and length | E0201, E0204, E0802, E0803 | 36 + 4 + 9 + 18 |
 | S13 | A trap, a stack overflow and an out-of-memory failure end the process or the contained task in a defined way; none is undefined behaviour | `ei_trap`, the guard page, `"probe-stack"="inline-asm"` ("Stack overflow") | `compiler/tests/run/stack_overflow*.ei`; #196 |
 
@@ -67,8 +67,10 @@ same sanitizers; a mutation fuzzer for the compiler (`packages/fuzz`).
 
 **Not yet** (each is a workstream of #246): a differential check of the LLVM backend against the interpreter;
 sanitizer runs of the programs the fuzzer's checker accepts; machine-checked buffer and count invariants in the C core;
-an enforced type rule for what may cross to another thread (today it is the runtime's uniqueness discipline over
-non-atomic counts); a detector for an FFI overrun; a formal model of the protection rule and copy-on-write.
+a *proof* that the compiler's list of crossing points is complete (today: handle counts (`Task`, `Mutex`, `Chan`) are atomic;
+buffer counts are not, and every crossing point applies a generated `own_` glue that makes the value deeply unique;
+the crossing points are tested under TSan, `tests/safety/run/s11_crossing_points.ei`, but a point nobody thought of would
+not be); a detector for an FFI overrun; a formal model of the protection rule and copy-on-write.
 
 ## Where the rules are tested for this specification
 

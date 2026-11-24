@@ -155,11 +155,26 @@ static void reserve(unsigned char **p, size_t *cap, size_t need) {
   *cap = n;
 }
 
+/* Internal invariants (docs/design/c-core-audit.md "Invariants"): checked in builds with -DEI_RT_CHECK_INVARIANTS. */
+#ifdef EI_RT_CHECK_INVARIANTS
+#define EI_INV(c) \
+  do { \
+    if (!(c)) { \
+      fflush(stdout); \
+      fprintf(stderr, "eider: internal invariant violated: %s (%s:%d)\n", #c, __FILE__, __LINE__); \
+      abort(); \
+    } \
+  } while (0)
+#else
+#define EI_INV(c) ((void)0)
+#endif
+
 static void out_put(const void *d, size_t n) {
   reserve(&out_p, &out_cap, out_len + n + 1);
   if (n) memcpy(out_p + out_len, d, n);
   out_len += n;
   out_p[out_len] = 0;
+  EI_INV(out_len <= out_cap); /* I4 */
   if (out_len > out_hw) out_hw = out_len;
 }
 
@@ -173,6 +188,7 @@ static const char *arg(int k) {
     if (i >= in_len) return NULL;
     i++;
   }
+  EI_INV(i <= in_len); /* I4: the pointer is inside the input buffer, or on its terminator */
   return (const char *)in_p + i;
 }
 

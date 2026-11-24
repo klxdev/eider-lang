@@ -345,7 +345,7 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
       # its own runtime before a stack overflow reaches the runtime's guard; core/RUNTIME.md)
       case " $(sed -n 's|^// nosan: ||p' "$f") " in *" $s "*) continue ;; esac
       rsan=$((rsan + 1))
-      flags="-Werror -O2 -fsanitize=$s"
+      flags="-Werror -O2 -fsanitize=$s -DEI_RT_CHECK_INVARIANTS"
       [ $s = undefined ] && flags="$flags -fsanitize-undefined-trap-on-error"
       outcome env EIDER_CFLAGS="$flags" $new $cmd "$f"
       if cmp -s $tmp/got $tmp/out; then
