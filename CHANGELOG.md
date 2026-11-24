@@ -5,7 +5,7 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## Unreleased
+## 0.7.8
 
 Throughput of task-based servers (eider-http against axum, same machine: 33% to about parity; eider-http's CHANGELOG has the numbers).
 
