@@ -2,7 +2,7 @@
 # Cut a release of the Eider toolchain and the tools shipped with it
 # (docs/site/tooling/releases.md). scripts/publish.sh runs it, then signs and publishes.
 #
-#   scripts/release.sh [--skip-verify] [--targets "<target>..."] [--no-binaries]
+#   scripts/release.sh [--skip-verify] [--allow-skipped-legs] [--targets "<target>..."] [--no-binaries]
 #
 # 1. Checks: eider-lang and every sibling (eider-analyzer, tree-sitter-eider, eider-profiler;
 #    EIDER_ANALYZER, TREE_SITTER_EIDER, EIDER_PROFILER, default $EIDER_SIBLINGS/<name> with
@@ -47,14 +47,16 @@
 cd "$(dirname "$0")/.." || exit 1
 here=$(pwd -P)
 skip_verify=
+allow_skipped=
 binaries=1
 TARGETS="linux-x86_64 linux-aarch64"
 while [ $# -gt 0 ]; do
   case $1 in
     --skip-verify) skip_verify=1; shift ;;
+    --allow-skipped-legs) allow_skipped=1; shift ;;
     --no-binaries) binaries=; shift ;;
     --targets) [ $# -ge 2 ] || { echo "release: --targets needs a list" >&2; exit 2; }; TARGETS=$2; shift 2 ;;
-    *) echo "usage: scripts/release.sh [--skip-verify] [--targets \"linux-x86_64 linux-aarch64\"] [--no-binaries]" >&2; exit 2 ;;
+    *) echo "usage: scripts/release.sh [--skip-verify] [--allow-skipped-legs] [--targets \"linux-x86_64 linux-aarch64\"] [--no-binaries]" >&2; exit 2 ;;
   esac
 done
 for t in $TARGETS; do
@@ -130,13 +132,23 @@ if [ -z "$skip_verify" ]; then
   grep "^skip" target/release-verify.log | sed 's/^/release: verify skipped: /'
   # a release is built from a run in which no leg was skipped: a skipped leg hides what it
   # would have found (the eider leg skipped for lack of AWS-LC hid a failing expectation)
+  # --allow-skipped-legs (the owner's decision, for a machine that cannot run a leg: a TSan that cannot
+  # follow longjmp, say) lets the release go on and says so: RELEASE.toml's `skipped_legs` and the
+  # release notes (publish.sh) list what was not run
+  skipped_file=target/release-skipped-legs.txt
+  rm -f "$skipped_file"
   if grep "^skip" target/release-verify.log | grep -v "^skip debug" | grep -qv "^skip crypto (\(openssl\|libressl\))"; then
-    die "verify skipped a leg (above): a release needs every leg to run; fetch what is missing (sh scripts/fetch-awslc.sh, sh scripts/vendor.sh fetch, clang with wasm32, wasm-ld, node) and run verify again"
+    if [ -n "$allow_skipped" ]; then
+      echo "release: --allow-skipped-legs: releasing although verify skipped the legs above; RELEASE.toml and the release notes will say so"
+      grep "^skip" target/release-verify.log | grep -v "^skip debug" | grep -v "^skip crypto (\(openssl\|libressl\))" | sed 's/^skip //; s/ *$//' > "$skipped_file"
+    else
+      die "verify skipped a leg (above): a release needs every leg to run; fetch what is missing (sh scripts/fetch-awslc.sh, sh scripts/vendor.sh fetch, clang with wasm32, wasm-ld, node) and run verify again (--allow-skipped-legs: release anyway and say so in RELEASE.toml)"
+    fi
   fi
   grep -q "^ok   tools" target/release-verify.log || die "verify did not build and test the siblings (its tools leg)"
   grep -q "^ok   eider" target/release-verify.log || die "verify did not run the eider leg"
   grep -q "^ok   crypto" target/release-verify.log || die "verify did not run the crypto leg"
-  grep -q "^ok   clang [0-9]* (" target/release-verify.log || die "verify did not run the llvms leg (programs built with other clang versions: sh scripts/clang-matrix.sh --fetch)"
+  grep -q "^ok   clang [0-9]* (" target/release-verify.log || [ -s "${skipped_file:-/nonexistent}" ] || die "verify did not run the llvms leg (programs built with other clang versions: sh scripts/clang-matrix.sh --fetch)"
   if sh scripts/verify-stamp.sh check-selfhost; then
     echo "release: scripts/selfhost.sh already printed SELF-HOSTED for this commit: not repeated"
   else
@@ -148,6 +160,7 @@ if [ -z "$skip_verify" ]; then
   verified=true
 else
   echo "release: --skip-verify: not running verify.sh and selfhost.sh; this is not a release"
+  rm -f target/release-skipped-legs.txt
   verified=false
 fi
 
@@ -177,6 +190,10 @@ host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host
   echo "series = \"$S\""
   echo "date = \"$(git log -1 --format=%cs HEAD)\""
   echo "verified = $verified"
+  if [ -s target/release-skipped-legs.txt ]; then
+    echo "# verify ran with these legs skipped on the publishing machine (release.sh --allow-skipped-legs):"
+    echo "skipped_legs = [$(sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/' target/release-skipped-legs.txt | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')]"
+  fi
   echo "backend = \"$backend\""
   [ -z "$clang_tested" ] || echo "clang_tested = [$clang_tested]   # the clang versions programs were built and tested with (scripts/clang-matrix.sh)"
   echo "release_key = \"$key_id\"   # minisign key id of SHA256SUMS.minisig (packages/eider/release.pub)"

@@ -188,6 +188,13 @@ The siblings (eider-analyzer, tree-sitter-eider, eider-profiler) keep their own 
 `RELEASE.toml` records the commit of each, and `release.sh` prints the commands to tag
 them too.
 
+A release is built from a verify run in which no leg was skipped (a skipped leg hides what it
+would have found). On a machine that cannot run a leg for good (a TSan that cannot follow
+`longjmp` on glibc 2.4x, the other clang versions, a musl sysroot), the owner can release anyway
+with `sh scripts/publish.sh <version> --allow-skipped-legs` (`release.sh` takes it too): the
+release says so, in `skipped_legs` of RELEASE.toml and in the release notes, which list each skipped
+leg. `--skip-verify` is different: it builds nothing that may be released.
+
 ### What scripts/release.sh builds
 
 ```sh

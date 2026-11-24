@@ -14,6 +14,7 @@ Throughput of task-based servers (eider-http against axum, same machine: 33% to 
 - **`sys.lit` and `std/bytes` are native bulk operations.** `sys.lit` is `s.bytes()` (it pushed one byte per FFI call), `bytes.slice`, `append`, `concat` and `split` use `List.slice` and `List.extend`. Same results (tests/std/bytes_ops.ei, checked against 0.7.6's); every program that builds byte strings is faster.
 - **`fd.wait_ready_or_unpark(fd, interest, parker, dl)`** (new): a descriptor, a `sync.Parker`'s unpark (a permit left before is taken) or a deadline; `Woke` is `FdReady | Unparked | DeadlinePassed`. One registration with the poller in a task. For a task that waits on a socket and on a signal from other threads without a descriptor for the signal.
 - **`net.try_send(sock, data)`** (new): `send` on a non-blocking socket, `None` when the send buffer is full.
+- **`publish.sh` and `release.sh` take `--allow-skipped-legs`** (the owner's decision, for a machine that cannot run a verify leg: a TSan that cannot follow `longjmp`, the other clang versions): the release goes ahead and says which legs were skipped, in RELEASE.toml (`skipped_legs`) and in the release notes. Without it a skipped leg still stops a release. docs/site/tooling/releases.md.
 - Tests: tests/std/fd_unpark.ei (a thread and a task), net_try_send.ei, bytes_ops.ei.
 
 ## 0.7.7

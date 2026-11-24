@@ -29,15 +29,17 @@ die() { echo "publish: $*" >&2; exit 1; }
 want=
 dry=
 skip=
+allow=
 for a in "$@"; do
   case $a in
     --dry-run) dry=1 ;;
     --skip-verify) skip=--skip-verify ;;
-    -*) die "unknown option $a (--dry-run, --skip-verify)" ;;
+    --allow-skipped-legs) allow=--allow-skipped-legs ;;
+    -*) die "unknown option $a (--dry-run, --skip-verify, --allow-skipped-legs)" ;;
     *) [ -z "$want" ] || die "one version only"; want=${a#v} ;;
   esac
 done
-[ -n "$want" ] || { echo "usage: sh scripts/publish.sh <version> [--dry-run] [--skip-verify]" >&2; exit 2; }
+[ -n "$want" ] || { echo "usage: sh scripts/publish.sh <version> [--dry-run] [--skip-verify] [--allow-skipped-legs]" >&2; exit 2; }
 [ -n "$skip" ] && [ -z "$dry" ] && die "--skip-verify is only for --dry-run: a published release is verified"
 REPO=${EIDER_PUBLISH_REPO:-klxdev/eider-lang}
 V=$(tr -d ' \n' < VERSION)
@@ -61,7 +63,7 @@ id=$(sed -n '1s/.*minisign public key //p' target/publish-key.pub)
 grep -q "PUBLIC_KEY: str = \"$line\"" packages/eider/release_key.ei || die "$key is not the key embedded in packages/eider/release_key.ei (sh scripts/release-key.sh --embed, then commit)"
 grep -q "^EIDER_PUBKEY=$line\$" install.sh || die "$key is not the key in install.sh (sh scripts/release-key.sh --embed, then commit)"
 echo "publish: release key $id ($key)"
-sh scripts/release.sh $skip || die "scripts/release.sh failed"
+sh scripts/release.sh $skip $allow || die "scripts/release.sh failed"
 A=target/release/assets/v$V
 [ -f "$A/SHA256SUMS" ] || die "release.sh wrote no $A/SHA256SUMS"
 grep -q "^verified = true" target/release/eider-$V/RELEASE.toml || [ -n "$skip" ] || die "RELEASE.toml does not say verified = true"
@@ -89,6 +91,9 @@ fi
 # ---- 4. the tag, the push, the GitHub release
 notes=target/release/notes-$V.md
 awk -v v="## $V" '$0 == v { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > "$notes"
+if [ -s target/release-skipped-legs.txt ]; then
+  { echo; echo "**Verify legs skipped on the publishing machine** (\`--allow-skipped-legs\`; also in RELEASE.toml as \`skipped_legs\`):"; echo; sed 's/^/- /' target/release-skipped-legs.txt; } >> "$notes"
+fi
 { echo; echo "Install: \`sh install.sh\` (needs a GitHub token with access to $REPO), then \`eider toolchain install $V\`. SHA256SUMS is signed with the Eider release key $id (minisign; packages/eider/release.pub)."; } >> "$notes"
 files=$(cd "$A" && ls | sort | sed "s|^|$A/|" | tr '\n' ' ')
 if [ -n "$dry" ]; then
