@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./tests/safety/fail/s4_declaration_without_value.ei","line":3,"col":15},"message":"expected `=`"}
