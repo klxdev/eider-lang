@@ -5,7 +5,7 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.9 (unreleased)
+## 0.7.9
 
 The fix for a crash of programs that start and end many tasks (a use-after-free of task stacks, present since 0.7.7 and made likely by 0.7.8, which is therefore a pre-release), and memory safety (#246): Eider states what a program without `unsafe` or `ffi` cannot do, checks it more, and requires the checks of every release.
 
