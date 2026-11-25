@@ -5,6 +5,10 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## Unreleased
+
+- **Fixed: a finished task's stack was cached before its pages were discarded.** `stack_put` published the stack in the cache and only then called `madvise(MADV_DONTNEED)` on everything below its top 16 KiB. In between, another worker could take the stack for a new task, and the discard then zeroed that task's live frames: a wait record read back as zeros, return addresses of 0, garbage frames. Programs that start and end many tasks crashed (SIGSEGV, exit 139) intermittently, more often unoptimized (bigger frames reach below the top 16 KiB). The pages are now discarded before the stack is published. Measured on eider-http's `tests/server_test.ei` in a Fedora 44 VM: unoptimized 5 of 20 runs crashed on 0.7.7 and 14 of 20 on 0.7.8, optimized 0 of 20 and 4 of 20; with the fix 0 of 40 and 0 of 40, and the TSan legs and eider-http's suite are green. The bug is in 0.7.7 too; 0.7.8's faster task turnover made it far likelier, and 0.7.8 was marked a pre-release. core/eider_rt.c `stack_put`. PROPOSED_RELEASE.md has the evidence.
+
 ## 0.7.8
 
 Throughput of task-based servers (eider-http against axum, same machine: 33% to about parity; eider-http's CHANGELOG has the numbers).
