@@ -1031,6 +1031,14 @@ static void test_dns_deadline(void) {
   int64_t fd = ec_dns_job_fd(j);
   CHECK(fd >= 0);
   EQI(ec_fd_wait((int32_t)fd, 1, 30000), 1);
+  /* a timeout near INT64_MAX does not overflow the deadline (it did: signed overflow; audit R3 of #246) */
+  EQI(ec_fd_wait((int32_t)fd, 1, INT64_MAX), 1);
+  /* a free slot's even generation is not a handle: freeing it again would put the slot on the free list twice */
+  int64_t ch = ec_atomic_new(7);
+  EQI(ec_atomic_free(ch), 0);
+  int64_t forged = (int64_t)((((uint64_t)ch >> 32) + 1) << 32 | ((uint64_t)ch & 0xffffffffu));
+  EQI(ec_atomic_free(forged), -EINVAL);
+  EQI(ec_atomic_free(ch), -EINVAL);
   EQI(ec_dns_finish(j), 1);
   CHECK(ec_out_byte(0) == 1 && ec_out_byte(1) == 7 && ec_out_byte(2) == 4 && ec_out_byte(5) == 127);
   EQI(ec_out_byte(3) * 256 + ec_out_byte(4), 8080);

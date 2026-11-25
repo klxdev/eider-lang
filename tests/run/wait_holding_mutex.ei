@@ -1,0 +1,41 @@
+// A task that waits (sleep, join, channel receive) while it holds a Mutex traps with "cannot wait while holding a Mutex" BEFORE
+// it registers where it waits: the trap leaves the frame, and a registration made first would be left pointing at it (a wait
+// record in the reactor, a node in a channel's wait queue; audit R3 of #246). After each contained trap the same task, and
+// others, wait normally: sleeping on timers, receiving from a channel, joining.
+import std.time
+
+fn caught(f: fn() -> i32) -> String uses io {
+    match Task.catch(f) {
+        Ok(v) => String.from("ok")
+        Err(m) => m
+    }
+}
+
+fn main() uses io, threads, clock {
+    let m = Mutex.new(0)
+    let c: Chan[i32] = Chan.new()
+    let cc = c
+    let mm = m
+    let t = spawn(|| -> i32 {
+        // sleeping while holding the Mutex
+        print(caught(|| -> i32 { mm.update(|x: i32| -> i32 { time.sleep_ms(5)
+            x + 1 })
+            0 }))
+        // receiving while holding it
+        print(caught(|| -> i32 { mm.update(|x: i32| -> i32 { let v = cc.recv()
+            x + 1 })
+            0 }))
+        // and the task still waits normally afterwards, repeatedly
+        for i in 0..20 { time.sleep_ms(1) }
+        return 7
+    })
+    let m2 = m
+    let u = spawn(|| -> i32 {
+        for i in 0..20 { time.sleep_ms(1) }
+        return 8
+    })
+    print(u.join())
+    print(t.join())
+    c.close()
+    print(m.get())
+}

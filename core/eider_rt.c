@@ -1359,6 +1359,14 @@ static ei_task *find_task(ei_worker *w) {
     }
     pthread_mutex_lock(&S.mu);
     atomic_fetch_add(&S.nsleep, 1);
+    if (atomic_load(&S.polling) == 0) {
+      /* the poller handed the role over (cleared `polling`, saw nsleep == 0 and signalled nobody) between our
+         exchange above and the nsleep increment: nobody polls, so take the role instead of sleeping (audit R3, #246) */
+      atomic_fetch_sub(&S.nsleep, 1);
+      pthread_mutex_unlock(&S.mu);
+      idle_leave();
+      continue;
+    }
     while (S.wakeups == 0) pthread_cond_wait(&S.cv, &S.mu);
     S.wakeups--;
     atomic_fetch_sub(&S.nsleep, 1);
@@ -1490,6 +1498,13 @@ static void dump_handler(int sig) {
    comes in between leaves a permit (state NOTIFIED) and the park returns at once, so the
    lock needs no release after the switch. Callers re-check what they wait for: a permit can
    be left over. */
+/* A task holding a Mutex cannot wait (the lock would be held across the park). Checked BEFORE the caller registers where it
+   waits: a trap that leaves task_park longjmps out of a frame whose stack record the reactor or a channel queue still points
+   at (audit R3 of #246). task_park keeps the check as a backstop. */
+static void park_precheck(void) {
+  if (held_get() != 0) ei_trap("cannot wait while holding a Mutex", 0);
+}
+
 static void task_park(ei_task *t) {
   /* held_get, not held_n: park callers loop (join, recv, wait), so the compiler hoists the
      thread pointer out of the loop (AArch64 does; x86-64 addresses TLS through %fs each time) and
@@ -1611,6 +1626,10 @@ static void task_join(ei_task *t) {
   while (!t->done) {
     ei_task *me = task_self();
     if (me) {
+      if (held_get() != 0) { /* before linking into t->joiners (see park_precheck); join_mu is released first */
+        pthread_mutex_unlock(&join_mu);
+        park_precheck();
+      }
       me->wnext = t->joiners;
       t->joiners = me;
       wait_set(me, W_JOIN, (int64_t)t->id, -1, 0);
@@ -1682,6 +1701,10 @@ static void chan_wait(ei_chan *c) {
   if (!me) {
     pthread_cond_wait(&c->cv, &c->mu.mu);
     return;
+  }
+  if (held_get() > 1) { /* c->mu is one of the locks held; any other is one a waiting task may not hold. Checked before queueing on c (see park_precheck), with c->mu released as it is while parked */
+    ei_mutex_unlock(&c->mu);
+    ei_trap("cannot wait while holding a Mutex", 0);
   }
   wq_push(c, me);
   wait_set(me, W_CHAN, (int64_t)(uintptr_t)c, -1, 0);
@@ -2051,6 +2074,7 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
      woken where it parked, so a connection's task stays on its worker */
   ei_worker *cw = worker_self();
   struct reactor *r = cw ? &RX[cw->home] : &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
+  park_precheck(); /* before anything is registered */
   ei_wait w;
   memset(&w, 0, sizeof w);
   w.task = t;
@@ -2079,6 +2103,11 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
   if (fd >= 0) {
     int32_t top = fd2 > fd ? fd2 : fd;
     if ((size_t)top >= r->nfds) {
+      long openmax = sysconf(_SC_OPEN_MAX); /* a descriptor beyond the limit cannot be open: EBADF, not a huge table */
+      if (top < 0 || (openmax > 0 && (long)top >= openmax)) {
+        res = -EBADF;
+        goto failed;
+      }
       size_t nn = (size_t)top + 64;
       fdent *nf = realloc(r->fds, nn * sizeof *nf);
       if (!nf) {

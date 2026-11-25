@@ -74,9 +74,38 @@ are fresh) and `denote (cstep s st) = vstep (denote s) st` (`step_refines`, `run
 safety facts the design rests on are lemmas: the in-place branch is taken only when the variable is the buffer's sole
 owner (`write_in_place_sole`), the copy branch changes no existing buffer (`write_cow_keeps_buffers`), a release never
 frees a buffer another variable is bound to (`release_keeps_bound`). It models one thread; atomic counts and the
-crossing rule are stage 5. Stages 3 to 5 are open.
+crossing rule are stage 5.
 
-## The executable semantics (the "Miri mode")
+**Stages 3 and 4 are proved** (`proofs/Eider/Stage3.lean`, no `sorry`): in a path-based model (a reference is a *place*, a
+root variable and a path of indices, re-derived at each use), a write to a place that does not overlap another place cannot
+change what the other names (`read_write_ne`); a program the protection rule accepts (no write overlapping a read-only
+reference that is used later, S9/E0308) reads through each reference exactly what it read when the reference was bound
+(`protection`); a program with an overlapping write is rejected (`protection_rejects_overlap`). Stage 4: a write through
+`let mut a = p` is a write to `p` (`alias_is_set`, `alias_writes_original`); two `inout` arguments with non-overlapping
+places commute and are independent (`write_comm`, `call2_order`, `call2_exclusive`), and overlapping ones are rejected
+(`call2_checked`, E0301). The model covers integers and nested lists; the checker is the rule as stated, not the Eider checker's
+code, so the claim that `eiderc` implements the rule is carried by the corpus and the fuzzing, not by this proof.
+
+**Stage 5 is proved** (`proofs/Eider/Stage5.lean`, no `sorry`): with buffers that can hold buffers, copy-on-write steps and a
+`send` that deep-copies the buffer graph into fresh ids (to a bounded depth `k`; the copy's shape is not proved, only that its
+ids are fresh and closed), the invariant "no buffer is reachable from two threads" holds in every reachable state
+(`disjoint_run`), every step's reads and writes of counts and cells stay inside the acting thread's reachable set or fresh ids
+(`step_writes`), so two threads never touch one count or cell (`no_race`, `no_race_writes`): the non-atomic counts are
+sound. The negative case is a lemma too: sending the shared buffer id without the copy breaks the invariant
+(`unsafe_send_breaks_disjoint`), which is why the list of crossing points must be complete. That the compiler's list *is*
+complete is not proved: it is tested (`tests/safety/run/s11_crossing_points.ei`, TSan).
+
+All five stages are in `proofs/`; `scripts/proofs.sh` is a verify leg (`memsafe`) that a release requires.
+
+## The executable semantics (the "Miri mode"): decision, 2026-11-25
+
+Not built as a separate checked-store interpreter. `compiler/interp.ei` has value semantics by construction (a `Val` is a
+copy-on-write List), so adding a store to it would be a second implementation of the runtime, and the evidence it would add is
+already collected by cheaper means: the compiled code's invariants checked under `-DEI_RT_CHECK_INVARIANTS`, ASan+UBSan,
+the leak legs, the proofs of stages 2 to 5 for the model, and `tests/safety/diff`, which compares the interpreter with the
+compiled code on 100,000 integer functions and 25,000 heap-value functions. Reopen if a bug appears that these cannot see.
+
+## (original sketch, kept for the record)
 
 In parallel, and sooner than the proofs: `compiler/interp.ei` is an IR interpreter that already runs comptime programs. Giving it
 a **checked store** (every buffer has an owner count, every access is range-checked against the live allocation, every

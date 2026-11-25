@@ -194,6 +194,12 @@ host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host
     echo "# verify ran with these legs skipped on the publishing machine (release.sh --allow-skipped-legs):"
     echo "skipped_legs = [$(sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/' target/release-skipped-legs.txt | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')]"
   fi
+  # what verify checked of the memory-safety claim (docs/design/memory-safety.md): proofs, bounded model checking, the rule corpus,
+  # sanitizer fuzzing of accepted programs; a release has all of them (a skipped one stops release.sh above)
+  if [ -s target/release-verify.log ]; then
+    ms=$(grep -E '^ok +(proofs|cbmc|safety|sanitizer fuzzing)' target/release-verify.log | sed 's/^ok *//; s/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/' | paste -sd, -)
+    echo "memory_safety = [$ms]"
+  fi
   echo "backend = \"$backend\""
   [ -z "$clang_tested" ] || echo "clang_tested = [$clang_tested]   # the clang versions programs were built and tested with (scripts/clang-matrix.sh)"
   echo "release_key = \"$key_id\"   # minisign key id of SHA256SUMS.minisig (packages/eider/release.pub)"

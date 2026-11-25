@@ -20,7 +20,7 @@
 # (scripts/verify-stamp.sh), so that scripts/release.sh and publish.sh don't repeat it.
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
-LEGS="compiler llvms seed tools tsan asan gcc clang docs eider crypto pkg std core misc export"
+LEGS="compiler llvms seed tools tsan asan gcc clang docs eider crypto pkg std core misc export memsafe"
 
 # ---- one leg: prints its `ok`/`FAIL`/`skip` lines. Legs never touch each other's files.
 if [ "$1" = "--leg" ]; then
@@ -98,13 +98,23 @@ if [ "$1" = "--leg" ]; then
     sh tests/safety/run.sh target/eiderc-next > $S/safety 2>&1 || grep -q "^FAIL" $S/safety || echo "FAIL safety: sh tests/safety/run.sh"
     cat $S/safety
     # the Lean proofs of the safety model (docs/design/formal-model.md); skipped, with the reason, without Lean
-    sh scripts/proofs.sh
+    # the programs the checker accepts, built and run under ASan+UBSan with the C-core invariant checks (docs/design/memory-safety.md,
+    # "what is checked"): a sanitizer report on an accepted program is a soundness bug. VERIFY_SAN_FUZZ is the number of mutants
+    # (a release runs 1000; SEED is fixed, so the run is reproducible)
+    SAN=1 SEED=${VERIFY_SAN_SEED:-1} sh scripts/fuzz-check.sh ${VERIFY_SAN_FUZZ:-1000} > $S/sanfuzz 2>&1; frc=$?
+    if [ $frc = 0 ] && grep -q "'failed': 0" $S/sanfuzz; then echo "ok   sanitizer fuzzing: $(grep -o "'ran': [0-9]*" $S/sanfuzz | head -1) accepted programs run under ASan+UBSan, no report"; else echo "FAIL sanitizer fuzzing (SAN=1 scripts/fuzz-check.sh; exit $frc)"; tail -8 $S/sanfuzz; fi
     printf 'int x;\n' > $S/wasm.c
     if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
       sh tests/wasm/run.sh || echo "FAIL tests/wasm"
     else
       skip "wasm: needs clang with the wasm32 target, wasm-ld and node"
     fi ;;
+  memsafe)
+    # the machine-checked parts of the memory-safety claim (docs/design/memory-safety.md): the Lean proofs of the model (no `sorry`)
+    # and the bounded model checking of the C core's buffer code. Both skip, with the reason, where the tool is absent, and a
+    # release does not go out with them skipped (release.sh): the release image (scripts/release-env/) has Lean and CBMC
+    sh scripts/proofs.sh
+    sh tests/cbmc/run.sh ;;
   gcc|clang|asan|tsan) runtests $leg ;;
   llvms)
     # llvms: the compiler built, the compile-fail suite and the run tests with the other clang

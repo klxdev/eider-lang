@@ -1929,7 +1929,7 @@ static int64_t pk_wait(int32_t fd, int32_t interest, int64_t h, int64_t timeout_
   p[np].fd = k->r;
   p[np].events = POLLIN;
   np++;
-  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  int64_t end = timeout_ms > 0 ? mono_ms() + (timeout_ms > 1000000000000 ? 1000000000000 : timeout_ms) : 0; /* ~31 years: no overflow */
   int64_t res = 0;
   for (;;) {
     int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
@@ -2009,7 +2009,7 @@ EC_FN(int64_t, ec_fd_wait, (int32_t fd, int32_t interest, int64_t timeout_ms)) {
   struct pollfd p;
   p.fd = fd;
   p.events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
-  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  int64_t end = timeout_ms > 0 ? mono_ms() + (timeout_ms > 1000000000000 ? 1000000000000 : timeout_ms) : 0; /* ~31 years: no overflow */
   for (;;) {
     int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
     if (timeout_ms > 0 && left < 0) left = 0;
@@ -2056,7 +2056,7 @@ EC_FN(int64_t, ec_fd_wait2, (int32_t fd, int32_t interest, int32_t fd2, int32_t 
   p[0].events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
   p[1].fd = fd2;
   p[1].events = (short)(((interest2 & 1) ? POLLIN : 0) | ((interest2 & 2) ? POLLOUT : 0));
-  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  int64_t end = timeout_ms > 0 ? mono_ms() + (timeout_ms > 1000000000000 ? 1000000000000 : timeout_ms) : 0; /* ~31 years: no overflow */
   for (;;) {
     int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
     if (timeout_ms > 0 && left < 0) left = 0;
@@ -2677,7 +2677,7 @@ static ec_cell *cell_of(int64_t h) {
   if (h > 0) {
     uint32_t i = (uint32_t)(h & 0xffffffff), g = (uint32_t)(h >> 32);
     if (i / EC_CELL_CHUNK < EC_CELL_CHUNKS) c = cell_slot(i);
-    if (c && atomic_load_explicit(&c->gen, memory_order_acquire) != g) c = NULL;
+    if (c && (atomic_load_explicit(&c->gen, memory_order_acquire) != g || !(g & 1))) c = NULL; /* an odd generation: in use */
   }
   if (!c) {
     fflush(stdout);
@@ -2732,7 +2732,7 @@ EC_FN(int64_t, ec_atomic_free, (int64_t h)) {
   if (i / EC_CELL_CHUNK >= EC_CELL_CHUNKS) return -EINVAL;
   pthread_mutex_lock(&cell_mu);
   ec_cell *c = i < cell_used ? cell_slot(i) : NULL;
-  if (!c || atomic_load_explicit(&c->gen, memory_order_relaxed) != g) {
+  if (!c || atomic_load_explicit(&c->gen, memory_order_relaxed) != g || !(g & 1)) { /* odd: in use; a free slot's even generation is not a handle */
     pthread_mutex_unlock(&cell_mu);
     return -EINVAL;
   }

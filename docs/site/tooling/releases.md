@@ -195,12 +195,24 @@ with `sh scripts/publish.sh <version> --allow-skipped-legs` (`release.sh` takes 
 release says so, in `skipped_legs` of RELEASE.toml and in the release notes, which list each skipped
 leg. `--skip-verify` is different: it builds nothing that may be released.
 
-### What a release says about memory safety
+### What a release requires and says about memory safety
 
-A release's `CHANGELOG.md` section has a **Soundness** line when it fixes a violation of the memory-safety claim
-(`docs/design/soundness-policy.md`), and its notes name the sanitizer legs that ran (ASan+UBSan, TSan) and any that
-were skipped, and the sanitizer fuzzing budget of the accepted-program corpus (`SAN=1 scripts/fuzz-check.sh`) with its
-result. An S0 or S1 soundness fix is the release's first item.
+`scripts/verify.sh` has these memory-safety checks, and a release is built only from a run where **all of them ran and
+passed** (a skipped leg stops `release.sh` unless the owner passes `--allow-skipped-legs`, which is then recorded in
+`RELEASE.toml`):
+
+- `tests/safety` (the rule corpus: programs that must be rejected, programs that must be accepted, run-time behaviour,
+  the FFI overrun guard, the compile-time/compiled differential, every rule having its tests);
+- `sanitizer fuzzing`: 1,000 mutants (`VERIFY_SAN_FUZZ`, fixed `VERIFY_SAN_SEED`) whose accepted programs are built and run under
+  ASan+UBSan with the C-core invariant checks; any report is a soundness bug and fails the leg;
+- `proofs` (`scripts/proofs.sh`): the Lean 4 proofs of the safety model build with no `sorry` and no `axiom`;
+- `cbmc` (`tests/cbmc/run.sh`): the bounded model checking of the C core's buffer code;
+- the TSan legs (the thread crossing points; they skip on a glibc whose TSan cannot follow `longjmp`, so a release is made
+  in the Fedora 44 image `scripts/release-env/`, which has Lean, CBMC and a working TSan).
+
+`RELEASE.toml` lists what passed under `memory_safety`. A release's `CHANGELOG.md` section has a **Soundness** line when it
+fixes a violation of the claim (`docs/design/soundness-policy.md`); an S0 or S1 fix is its first item. A change to a rule, to
+the C core's buffer code or to the model updates its proof, harness or corpus in the same commit (the legs fail otherwise).
 
 ### What scripts/release.sh builds
 

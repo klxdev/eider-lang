@@ -51,7 +51,7 @@ The claim depends on all of these being correct. Each has one line on how it is 
 
 | Part | Size | How it is checked | Weakest point |
 |---|---|---|---|
-| The checker (`compiler/check.ei`) and the rules above | the largest file of the compiler | the compile-fail corpus, the fuzzer, the self-hosting fixed point | the rules are argued, not proved; 0.7.7 still changed them (#183, #198, #219) |
+| The checker (`compiler/check.ei`) and the rules above | the largest file of the compiler | the compile-fail corpus, the fuzzer, the self-hosting fixed point | the rules are modelled and proved sound for the model (`proofs/`, stages 1 to 5), but the checker's code is not proved to implement them; 0.7.7 still changed the rules (#183, #198, #219) |
 | The LLVM backend (`llvm.ei`, `llvm_abi.ei`) and clang/lld | | every run test through ASan+UBSan and TSan, the llvms leg (clang 17 to 23) | the backend writes IR by hand; a lowering bug breaks S5 or S11 without any checker rule firing |
 | The C core (`core/eider_rt.c`, `eider_core.c`, `eider_prof.c`) | about 6,900 lines | `tests/core/` (rt_test, core_test, os_test: 637+ checks), ASan+UBSan and TSan builds | **it is C**: no language rule covers it; buffer and count code is the most sensitive (`ei_buf_*`, `ei_str_*`, list growth, map) |
 | The comptime evaluator (`compiler/interp.ei`) | | compile-fail and run tests | an IR interpreter that implements the language a second time |
@@ -71,14 +71,16 @@ interpreter is compared with the compiled code on 100,000 generated total intege
 difference); an overrun by C of an `inout List[u8]` is caught (S12); the process code of the C core was audited
 (`c-core-audit.md`, two bugs fixed).
 
-**Not yet** (each is an open part of #246): a differential check that covers more than integer arithmetic (lists,
-records, strings, closures, `Map`), and one that compares the LLVM backend with a *checked-store* interpreter; machine-checked
-buffer and count invariants in the C core (CBMC or Frama-C is not installed here); a *proof* that the compiler's list of
-crossing points is complete (today: handle counts (`Task`, `Mutex`, `Chan`) are atomic; buffer counts are not, and every
-crossing point applies a generated `own_` glue that makes the value deeply unique; the crossing points are tested under
-TSan, `tests/safety/run/s11_crossing_points.ei`, but a point nobody thought of would not be); a detector for an FFI
-overrun beyond the canary, for reads, or for buffers C keeps; a formal model of the protection rule and copy-on-write
-(`formal-model.md`: planned, no proof assistant installed).
+**Not yet** (open parts of #246): a proof that the compiler's list of thread crossing points is complete (today: handle counts
+(`Task`, `Mutex`, `Chan`) are atomic; buffer counts are not, every crossing point applies a generated `own_` glue that makes the
+value deeply unique, and `proofs/Eider/Stage5.lean` proves that this is sound *if the list is complete*; the crossing points are
+tested under TSan, but a point nobody thought of would not be); a proof that `eiderc`'s checker and runtime implement the
+calculus (the proofs are about the rules as stated); a differential check wider than integers, lists, strings, maps and records
+(closures, traits, threads); CBMC for the rest of the C core (the buffer and string functions are done; the reactor, parkers
+and process code are not); a detector for an FFI overrun beyond the canary, for reads, or for buffers C keeps.
+
+Required of every release (`docs/site/tooling/releases.md`): the rule corpus, sanitizer fuzzing of accepted programs, the Lean
+proofs (no `sorry`) and the CBMC harnesses all run and pass.
 
 ## Where the rules are tested for this specification
 

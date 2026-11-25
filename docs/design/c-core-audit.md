@@ -34,7 +34,9 @@ hand-written assembly, parsing of data that came from outside, and concurrency w
 | TSan builds | pass on Fedora 44 (the release container); Fedora 45's TSan cannot follow `longjmp`, so they are skipped there |
 | Programs the checker accepts, run under ASan+UBSan (the fuzzer, `SAN=1 scripts/fuzz-check.sh`) | no report so far; see the campaign numbers in #246 |
 
-Not available on this machine: `cbmc`, `frama-c`, `clang-tidy`, `cppcheck`, `scan-build`. `valgrind` is.
+| CBMC 6.8 (`tests/cbmc/run.sh`, the release image) | **proved within the stated bounds, with pointer, bounds and overflow checks:** `ei_grow_cap` for all 64-bit inputs (no wrap, room for the request); `ei_buf_alloc`/`ei_buf_grow` size arithmetic for all 64-bit `n` (element size up to 16); `ei_list_open`/`ei_list_close` for every length, position and gap up to the bound (no access outside the buffer, `len <= cap`); `ei_str_cat` for every String and appended text of up to 2 bytes, `ei_str_slice` for every ASCII source of up to 3 bytes and every range (well formed result, I1). Not model-checked: appending a String to itself (too large for the solver; the runtime tests cover it under ASan), `out_put`/`arg` of the core (static functions of a large file), the reactor, parkers and process code |
+
+Not available on this machine: `frama-c`, `clang-tidy`, `cppcheck`, `scan-build`. `valgrind` is.
 
 ## Invariants to write down and check
 
@@ -87,14 +89,30 @@ Read `stack_get`, `stack_put`, `ctx_make`, `ei_ctx_switch` and the guard-page lo
   is 16-byte aligned for `ei_ctx_boot`'s `call`. Nothing else to report. The AArch64 path uses `ucontext`, which the task
   tests run (`task ucontext`).
 
+## R3 audit: the reactor, parkers, atomic cells (2026-11-25)
+
+Done by a read-only reviewer who traced each candidate to an interleaving; every finding below was re-read in the code and
+fixed here. Ruled out after tracing: a lost wake-up in `task_wait` (`done` is checked under `r->mu`, an early `unpark` leaves a
+permit), a waker touching a dead wait record, a double completion, `fds` table growth under the lock, the lock order (parker
+stripe, then reactor, then `qmu`/`S.mu`/`mon_mu`: never reversed), the poll/poke double check, stale events with `ONESHOT`,
+the signal handler, the parker handle generations.
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| F1 | S0 | `task_wait`, `chan_wait` and `task_join` registered the waiting task (a stack record in the reactor's descriptor lists and timer heap, a node in a channel's wait queue, the joiner list) and only then called `task_park`, which traps when the task holds a `Mutex`. The trap longjmps out of the frame the reactor or queue still points at: a later timer or event writes into a live frame, or a freed task is woken | the check runs first (`park_precheck`; `chan_wait` releases its own lock and traps, `task_join` releases `join_mu`); `task_park` keeps it as a backstop. A wait that would have completed at once while a Mutex is held now traps too. `tests/run/wait_holding_mutex.ei` is a smoke test: it passes on the old runtime as well, since the damage depends on what the abandoned frame's memory is reused for; the defect is shown by the code, not by a failing test |
+| F2 | S2 | the poller hand-over could be lost: a worker that saw `polling == 1` and had not yet counted itself in `nsleep` missed the outgoing poller's wake-up, then slept while nobody polled (timers and descriptors stall until a running task yields) | after counting itself as a sleeper the worker re-checks `polling` and takes the role when it is clear (a Dekker pair with the poller's clear-then-read of `nsleep`) |
+| F3 | S2 | `task_wait` grew its descriptor table to `fd + 64` entries for any `i32` (`fd.wait_ready(2147483647, ...)`: a 34 GB `realloc` and `memset`) | a descriptor at or above `sysconf(_SC_OPEN_MAX)` is `-EBADF` |
+| F4 | S3 | the thread-path deadline `mono_ms() + timeout_ms` overflowed for a timeout near `INT64_MAX` (`pk_wait`, `ec_fd_wait`, `ec_fd_wait2`) | clamped to 10^12 ms as the task path does; `tests/core/os_test.c` |
+| F5 | S3 | an atomic cell handle with an even generation (a free slot, or generation 0) was accepted by `cell_of` and `ec_atomic_free`: freeing a forged handle put the slot on the free list twice, so two later `new` calls returned one cell | the generation must be odd; `tests/core/os_test.c` |
+
 ## Plan for this part
 
 1. **Assert I1 to I5** in the C core under `-DEI_RT_CHECK_INVARIANTS` (on in the sanitizer and hardened builds); run the
    whole test matrix with it on. *(next)*
-2. **Bounded model checking** of the R1 functions with CBMC (or Frama-C/WP) once it is installed: `ei_buf_alloc/grow`,
+2. **Bounded model checking** of the R1 functions with CBMC (done for the buffer and String functions listed above; the rest is open): `ei_buf_alloc/grow`,
    `ei_grow_cap`, `ei_str_cat`, `ei_str_slice`, the list push/grow glue, `arg`, `out_put`. Proof of I1 to I5 for all
    lengths up to a bound and overflow-freedom for all 64-bit inputs.
 3. **R5**: done, see the section above (two bugs fixed).
-4. **R2**: done, see the section above (one race fixed). **R3** (the reactor): not reviewed yet. A stress test that runs under
+4. **R2**: done, see the section above (one race fixed). **R3**: done, see the section above (five findings, all fixed). A stress test that runs under
    TSan on a system where TSan works (the Fedora 44 container) is the standing check.
 5. Move pieces into an audited `unsafe` Eider layer where the code is simple enough, so the C part shrinks.
