@@ -5,6 +5,8 @@
 sysctl -w vm.max_map_count=1048576 >/dev/null   # the default 65530 makes the core `task (tsan)` tests fail with ENOMEM
 sysctl -w kernel.pid_max=4194304 kernel.threads-max=1000000 >/dev/null  # the default pid_max of 32768 runs out under the parallel legs: thread creation fails with EAGAIN ("cannot resolve localhost: Resource temporarily unavailable")
 ip link set lo up                               # a bare VM has no loopback: the server tests cannot connect to themselves
+ulimit -u 1000000 2>/dev/null                    # threads per user: the parallel legs start thousands (pthread_create fails with EAGAIN at the limit)
+sysctl -w vm.overcommit_memory=1 >/dev/null     # thousands of 8 MiB thread stacks: do not let the heuristic refuse their mmap
 ulimit -n 1048576                               # the default 1024 is too few descriptors for the server tests
 id tester >/dev/null 2>&1 || useradd -m tester
 # the host's workspace is a read-only 9P mount, root-owned: an unprivileged user (some tests need one) works on a copy
