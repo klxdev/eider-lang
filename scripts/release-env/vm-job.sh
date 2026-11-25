@@ -3,6 +3,7 @@
 # then the command as an unprivileged user in a copy of the workspace on the VM's own disk. Not meant to be run by hand.
 #   vm-job.sh <command...>     (the command runs in /work/eider-lang)
 sysctl -w vm.max_map_count=1048576 >/dev/null   # the default 65530 makes the core `task (tsan)` tests fail with ENOMEM
+sysctl -w kernel.pid_max=4194304 kernel.threads-max=1000000 >/dev/null  # the default pid_max of 32768 runs out under the parallel legs: thread creation fails with EAGAIN ("cannot resolve localhost: Resource temporarily unavailable")
 ip link set lo up                               # a bare VM has no loopback: the server tests cannot connect to themselves
 ulimit -n 1048576                               # the default 1024 is too few descriptors for the server tests
 id tester >/dev/null 2>&1 || useradd -m tester
