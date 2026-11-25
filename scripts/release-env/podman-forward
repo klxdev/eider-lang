@@ -36,7 +36,8 @@ PY
             src=${2%%:*}
             [ -d /work/.pg-pki ] && [ -d "$src" ] && cp -a /work/.pg-pki/. "$src"/
             shift 2 ;;
-        -p|-e|--security-opt) shift 2 ;;
+        -p) pub=${2%:*}; PORT=${pub##*:}; shift 2 ;; # 127.0.0.1:PORT:5432 -> the port pg-up.sh chose (eider-sql uses its own default, 55440)
+        -e|--security-opt) shift 2 ;;
         -d|--rm) shift ;;
         *) break ;;
       esac
