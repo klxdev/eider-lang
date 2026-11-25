@@ -72,6 +72,21 @@ Read line by line for descriptor ownership on every error path and for what runs
 - The one remaining unsafe-looking write, `EC_ENVIRON = envp` in the child, only changes the child's copy of the
   address space.
 
+## R2 audit: task stacks and the context switch (2026-11-25)
+
+Read `stack_get`, `stack_put`, `ctx_make`, `ei_ctx_switch` and the guard-page logic.
+
+- **Fixed: a race in the stack cache.** `stack_put` put a finished task's stack into the shared cache and only then called
+  `madvise(MADV_DONTNEED)` on everything below its top 16 KiB. Another worker could take that stack from the cache for a new
+  task meanwhile, and the `madvise` would zero the new task's live frames once they grew past the top 16 KiB (a silent
+  corruption of a task's stack, rare because the window is a few instructions). The `madvise` now comes first, the stack is
+  published after.
+- **I6 asserted** (under `-DEI_RT_CHECK_INVARIANTS`): the guard is whole pages below a non-empty stack, the first frame of a
+  new task fits in its stack, and its saved stack pointer is inside the mapping.
+- The context switch saves exactly the System V callee-saved registers (`rbp rbx r12 r13 r14 r15`); the new task's first frame
+  is 16-byte aligned for `ei_ctx_boot`'s `call`. Nothing else to report. The AArch64 path uses `ucontext`, which the task
+  tests run (`task ucontext`).
+
 ## Plan for this part
 
 1. **Assert I1 to I5** in the C core under `-DEI_RT_CHECK_INVARIANTS` (on in the sanitizer and hardened builds); run the
@@ -80,6 +95,6 @@ Read line by line for descriptor ownership on every error path and for what runs
    `ei_grow_cap`, `ei_str_cat`, `ei_str_slice`, the list push/grow glue, `arg`, `out_put`. Proof of I1 to I5 for all
    lengths up to a bound and overflow-freedom for all 64-bit inputs.
 3. **R5**: done, see the section above (two bugs fixed).
-4. **R2/R3**: review of the context switch and the guard-page logic against #196's lesson (a frame can jump a guard);
-   a stress test that runs under TSan on a system where TSan works.
+4. **R2**: done, see the section above (one race fixed). **R3** (the reactor): not reviewed yet. A stress test that runs under
+   TSan on a system where TSan works (the Fedora 44 container) is the standing check.
 5. Move pieces into an audited `unsafe` Eider layer where the code is simple enough, so the C part shrinks.

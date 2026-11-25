@@ -64,7 +64,17 @@ podman run --rm --userns=keep-id --user $(id -u):$(id -g) --security-opt label=d
 **Stage 1 is proved** (`proofs/Eider/Stage1.lean`, no `sorry`): for integers, immutable lists, `let` and a checked index,
 a typed expression in a fitting environment never gets stuck and its value has its type (`type_safety`); an index outside
 the list is a trap and one inside reads exactly that cell (`idx_out_of_range`, `idx_in_range`). It is the smallest
-fragment with the memory question in it: it has no aliases, mutation or threads. Those are stages 2 to 5.
+fragment with the memory question in it: it has no aliases, mutation or threads.
+
+**Stage 2 is proved** (`proofs/Eider/Stage2.lean`, 756 lines, no `sorry`): over integer lists with `new`, `copy`, `set` and
+`drop`, the copy-on-write semantics (shared buffers with reference counts, an in-place write when the count is 1, a copy
+otherwise: `ei_buf_inc`, `ei_buf_dec`, `ei_str_unique`) refines the eager-copy value semantics: every step preserves the
+invariant `Inv` (no use after free; every live buffer's count is at least the number of variables bound to it; fresh ids
+are fresh) and `denote (cstep s st) = vstep (denote s) st` (`step_refines`, `run_refines`, `cow_refines_value`). The
+safety facts the design rests on are lemmas: the in-place branch is taken only when the variable is the buffer's sole
+owner (`write_in_place_sole`), the copy branch changes no existing buffer (`write_cow_keeps_buffers`), a release never
+frees a buffer another variable is bound to (`release_keeps_bound`). It models one thread; atomic counts and the
+crossing rule are stage 5. Stages 3 to 5 are open.
 
 ## The executable semantics (the "Miri mode")
 

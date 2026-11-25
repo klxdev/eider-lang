@@ -20,3 +20,5 @@ RUN dnf -y --setopt=install_weak_deps=False install zstd && dnf clean all \
     && echo "${LEAN_SHA256}  /tmp/lean.tar.zst" | sha256sum -c - \
     && mkdir -p /opt/lean && tar --zstd -xf /tmp/lean.tar.zst -C /opt/lean --strip-components=1 && rm /tmp/lean.tar.zst \
     && ln -s /opt/lean/bin/lean /usr/local/bin/lean && ln -s /opt/lean/bin/lake /usr/local/bin/lake && lean --version
+# CBMC, the bounded model checker for the proofs about the C core's buffer code (tests/cbmc/run.sh, docs/design/c-core-audit.md)
+RUN dnf -y --setopt=install_weak_deps=False install cbmc && dnf clean all && cbmc --version

@@ -1011,6 +1011,7 @@ static void ctx_make(ei_ctx *c, unsigned char *stack_lo, size_t len, ei_task *t)
   makecontext(c, (void (*)(void))task_main, 0);
 #else
   uintptr_t top = ((uintptr_t)stack_lo + len) & ~(uintptr_t)15;
+  EI_INV(top - 7 * sizeof(uintptr_t) >= (uintptr_t)stack_lo); /* I6: the first frame fits inside the stack */
   uintptr_t *sp = (uintptr_t *)top;
   *--sp = (uintptr_t)ei_ctx_boot; /* the return address ei_ctx_switch pops */
   *--sp = 0;                      /* rbp */
@@ -1020,6 +1021,7 @@ static void ctx_make(ei_ctx *c, unsigned char *stack_lo, size_t len, ei_task *t)
   *--sp = 0;                      /* r14 */
   *--sp = 0;                      /* r15 */
   *c = (void *)sp;
+  EI_INV((uintptr_t)sp >= (uintptr_t)stack_lo && (uintptr_t)sp < (uintptr_t)stack_lo + len); /* I6: the saved stack pointer is inside the mapping */
 #endif
 }
 
@@ -1035,6 +1037,7 @@ static bool stack_get(ei_task *t) {
   size_t p = page_size();
   t->guard = page_round(EI_THREAD_GUARD, p);
   t->map_len = t->guard + page_round(S.stack_size, p);
+  EI_INV(t->guard >= p && t->guard % p == 0 && t->map_len > t->guard); /* I6: a guard of whole pages below a non-empty stack */
   pthread_mutex_lock(&stk_mu);
   t->map = stk_cached > 0 ? stk_cache[--stk_cached] : NULL;
   pthread_mutex_unlock(&stk_mu);
@@ -1053,16 +1056,15 @@ static void stack_put(ei_task *t) {
   unsigned char *m = t->map;
   t->map = NULL;
   if (!m) return;
+  /* give back what the task touched below the top, so cached stacks stay small. This is done BEFORE the stack goes into the
+     cache: once it is there another worker can take it for a new task, and MADV_DONTNEED on a stack that task is already
+     using would zero its live frames (found by the audit of #246, docs/design/c-core-audit.md, R2) */
+  if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
   pthread_mutex_lock(&stk_mu);
   bool room = stk_cached < EI_STACK_CACHE;
   if (room) stk_cache[stk_cached++] = m;
   pthread_mutex_unlock(&stk_mu);
-  if (!room) {
-    munmap(m, t->map_len);
-    return;
-  }
-  /* give back what the task touched below the top, so cached stacks stay small */
-  if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
+  if (!room) munmap(m, t->map_len);
 }
 
 // ---- run queues

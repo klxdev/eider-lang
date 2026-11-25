@@ -1,0 +1,168 @@
+// The second generator of the differential check (workstream C of #246): straight-line programs over the heap values,
+// a List, a String, a Map and a record, with copy-on-write copies, aliases that write the original, loops and
+// branches. Each function returns a checksum of everything it built; main compares the compile-time interpreter's
+// result (`const C = comptime f(..)`) with the compiled call. Only what the interpreter implements is generated
+// (List.insert, remove, extend and slice are not: "comptime evaluation can't run this builtin", E0807).
+//   gen2.ei SEED COUNT
+import std.env
+import std.bytes
+
+type Rng = { s: u64 }
+
+fn next(inout r: Rng) -> u64 {
+    let mut x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+fn pick(inout r: Rng, n: u64) -> u64 { next(inout r) % n }
+
+fn lit(inout r: Rng) -> String {
+    let v = pick(inout r, 100)
+    if pick(inout r, 4) == 0 { return "((0 as i64) -% ({v} as i64))" }
+    "({v} as i64)"
+}
+
+fn atom(inout r: Rng) -> String {
+    let k = pick(inout r, 5)
+    if k == 0 { return String.from("x") }
+    if k == 1 { return String.from("y") }
+    if k == 2 { return String.from("(l.len() as i64)") }
+    if k == 3 { return String.from("p.a") }
+    lit(inout r)
+}
+
+fn expr(inout r: Rng, d: u64) -> String {
+    if d == 0 || pick(inout r, 4) == 0 { return atom(inout r) }
+    let x = expr(inout r, d - 1)
+    let y = expr(inout r, d - 1)
+    let k = pick(inout r, 7)
+    if k == 0 { return "({x} +% {y})" }
+    if k == 1 { return "({x} -% {y})" }
+    if k == 2 { return "({x} *% {y})" }
+    if k == 3 { return "({x} & {y})" }
+    if k == 4 { return "({x} ^ {y})" }
+    if k == 5 { return "({x} / (({y} & 7) + 1))" }
+    "({x} % (({y} & 7) + 1))"
+}
+
+/// a valid index into l (never empty: only `pop` shrinks it, and only above one element)
+fn idx(inout r: Rng) -> String {
+    let e = expr(inout r, 2)
+    "((({e}) & 255) as usize) % l.len()"
+}
+
+fn putc(inout out: List[String], s: str) { out.push(String.from(s)) }
+
+fn stmt(inout r: Rng, d: u64, inout out: List[String]) {
+    let k = pick(inout r, 16)
+    let e = expr(inout r, 3)
+    if k == 0 { out.push("    x = x +% {e}") }
+    else if k == 1 { out.push("    l.push({e})") }
+    else if k == 2 { let i = idx(inout r)
+        out.push("    l[{i}] = {e}") }
+    else if k == 3 { let i = idx(inout r)
+        out.push("    x = x +% l[{i}]") }
+    else if k == 4 { out.push("    s.append(\"{{{e}}}\")") }
+    else if k == 5 { out.push("    p.a = p.a +% {e}")
+        putc(inout out, "    p.b = p.b ^ x") }
+    else if k == 6 { out.push("    m.insert(({e}) & 15, x)") }
+    else if k == 7 {
+        out.push("    match m.get(({e}) & 15) {{")
+        putc(inout out, "        Some(v) => {{ x = x +% v }}")
+        putc(inout out, "        None => {{ y = y +% 1 }}")
+        putc(inout out, "    }}")
+    }
+    else if k == 8 {
+        let n = expr(inout r, 2)
+        out.push("    for i in 0..((({n}) & 7) as i64) {{ x = x +% (i *% ({e})) }}")
+    }
+    else if k == 9 {
+        // a copy is independent of the original
+        let i = idx(inout r)
+        let u = next(inout r) % 100000000
+        out.push("    let mut c{u} = l.copy()")
+        out.push("    c{u}[{i}] = {e}")
+        out.push("    x = x +% c{u}[{i}] +% l[{i}]")
+    }
+    else if k == 10 {
+        // a mutable alias writes the original
+        let i = idx(inout r)
+        putc(inout out, "    for _ in 0..1 {{")
+        putc(inout out, "        let mut a = l")
+        out.push("        a[{i}] = {e}")
+        putc(inout out, "    }}")
+    }
+    else if k == 11 {
+        putc(inout out, "    if l.len() > 1 {{")
+        putc(inout out, "        match l.pop() {{")
+        putc(inout out, "            Some(v) => {{ x = x +% v }}")
+        putc(inout out, "            None => {{}}")
+        putc(inout out, "        }}")
+        putc(inout out, "    }}")
+    }
+    else if k == 12 { putc(inout out, "    for v in l {{ y = y +% v }}") }
+    else if k == 13 && d < 2 {
+        let c = expr(inout r, 2)
+        out.push("    if {e} < {c} {{")
+        stmt(inout r, d + 1, inout out)
+        putc(inout out, "    }} else {{")
+        stmt(inout r, d + 1, inout out)
+        putc(inout out, "    }}")
+    }
+    else if k == 14 { putc(inout out, "    p = P(p.b, p.a)") }
+    else { putc(inout out, "    s = s.copy()") }
+}
+
+fn main() uses io {
+    let argv = env.args()
+    let mut r = Rng(1)
+    let mut count: u64 = 20
+    if argv.len() > 1 {
+        match bytes.parse_u64(argv[1]) {
+            Some(n) => { r = Rng(n * 2654435761 + 88172645463325252) }
+            None => {}
+        }
+    }
+    if argv.len() > 2 {
+        match bytes.parse_u64(argv[2]) {
+            Some(n) => { count = n }
+            None => {}
+        }
+    }
+    print("type P = {{ a: i64, b: i64 }}")
+    let mut main_body: List[String] = List.new()
+    for k in 0..count {
+        let mut body: List[String] = List.new()
+        let n = 3 + pick(inout r, 10)
+        for _ in 0..n { stmt(inout r, 0, inout body) }
+        print("fn f{k}(x0: i64, y0: i64) -> i64 {{")
+        print("    let mut x = x0")
+        print("    let mut y = y0")
+        print("    let mut l: List[i64] = List.new()")
+        print("    l.push(x0)")
+        print("    l.push(y0)")
+        print("    l.push(3)")
+        print("    let mut s = String.from(\"hi\")")
+        print("    let mut p = P(x0, y0)")
+        print("    let mut m: Map[i64, i64] = Map.new()")
+        for l in body { print(l) }
+        print("    let mut acc: i64 = x +% y +% p.a +% (3 *% p.b) +% (s.len() as i64) +% (m.len() as i64)")
+        print("    for v in l {{ acc = acc +% v }}")
+        print("    for c in s.bytes() {{ acc = acc +% (c as i64) }}")
+        print("    for kv in m {{ acc = acc +% kv.0 +% kv.1 }}")
+        print("    acc")
+        print("}}")
+        let a1 = lit(inout r)
+        let a2 = lit(inout r)
+        print("const C{k}: i64 = comptime f{k}({a1}, {a2})")
+        main_body.push("    if C{k} != f{k}({a1}, {a2}) {{ print(\"MISMATCH f{k}\") }}")
+    }
+    print("fn main() uses io {{")
+    for l in main_body { print(l) }
+    print("    print(\"done\")")
+    print("}}")
+}
