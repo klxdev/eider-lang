@@ -847,6 +847,55 @@ static void test_task_dump(void) {
     f();                                                                        \
   } while (0)
 
+// ---- a finished task's stack is discarded BEFORE it is cached (decision C917)
+// A worker that ends a task puts its stack in the cache; discarding the stack's pages (madvise DONTNEED below the top 16 KiB)
+// AFTER that lets another worker take the stack for a new task and then zero its live frames. The window is microseconds, so this
+// test (built with -DEI_RT_TEST_HOOKS, tests/core/run.sh "task hooks") makes stack_put wait 3 ms before the discard: a task
+// that starts 1 ms after another one ended fills a 40 KB local buffer, parks, and checks it when it wakes. With the discard
+// first it never sees a zero; with the discard after the publication it fails every iteration.
+#ifdef EI_RT_TEST_HOOKS
+extern _Atomic int64_t ei_test_discard_delay_ns;
+
+static unsigned char stack_pat(int i) { return (unsigned char)(i * 7 + 1); }
+
+static void *stack_toucher(void *arg) {
+  volatile unsigned char buf[40000];
+  for (int i = 0; i < 40000; i++) buf[i] = stack_pat(i);
+  *(int *)arg = buf[39999]; /* read it, so the frame is real */
+  return NULL;
+}
+
+static void *stack_checker(void *arg) {
+  volatile unsigned char buf[40000];
+  for (int i = 0; i < 40000; i++) buf[i] = stack_pat(i);
+  ec_sleep_ns(10 * 1000 * 1000); /* parked: the other worker's late discard would land now */
+  int bad = 0;
+  for (int i = 0; i < 40000; i++) bad += buf[i] != stack_pat(i);
+  *(int *)arg = bad;
+  return NULL;
+}
+
+static void test_stack_reuse(void) {
+  atomic_store(&ei_test_discard_delay_ns, 3 * 1000 * 1000);
+  int bad_total = 0;
+  for (int k = 0; k < 40; k++) {
+    ei_thread a, b;
+    int bad = -1;
+    int sink = 0;
+    ei_thread_start(&a, stack_toucher, &sink);
+    ec_sleep_ns(1000 * 1000);                  /* a has ended and is inside the 3 ms of its worker's stack_put */
+    ei_thread_start(&b, stack_checker, &bad); /* takes a's stack if it is already in the cache */
+    ei_thread_join(&a);
+    ei_thread_destroy(&a);
+    ei_thread_join(&b);
+    ei_thread_destroy(&b);
+    bad_total += bad < 0 ? 1 : bad;
+  }
+  atomic_store(&ei_test_discard_delay_ns, 0);
+  EQI(bad_total, 0);
+}
+#endif
+
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "overflow") == 0) child_overflow();
   if (argc > 1 && strcmp(argv[1], "threads") == 0) {
@@ -885,6 +934,9 @@ int main(int argc, char **argv) {
   RUN(test_poll_wait_parks);
   RUN(test_parker_fork);
   RUN(test_overflow);
+#ifdef EI_RT_TEST_HOOKS
+  RUN(test_stack_reuse);
+#endif
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }

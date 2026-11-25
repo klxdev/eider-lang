@@ -1052,6 +1052,13 @@ static bool stack_get(ei_task *t) {
   return true;
 }
 
+#ifdef EI_RT_TEST_HOOKS
+/* Test hook (tests/core/task_test.c, test_stack_reuse; built only with -DEI_RT_TEST_HOOKS): how long stack_put waits just before
+   the discard. With the discard before the publication this changes nothing; if someone puts the discard after it, the wait
+   widens the window to milliseconds and the test fails every time. */
+_Atomic int64_t ei_test_discard_delay_ns;
+#endif
+
 static void stack_put(ei_task *t) {
   unsigned char *m = t->map;
   t->map = NULL;
@@ -1061,6 +1068,15 @@ static void stack_put(ei_task *t) {
      moment, and a discard that came after would zero that task's live frames (a parked task's wait
      record, its return addresses): the crash was a stack that was cached, reused and then wiped.
      (Found twice: by the R2 audit of #246, docs/design/c-core-audit.md, and by a crash hunt on 0.7.8.) */
+#ifdef EI_RT_TEST_HOOKS
+  {
+    int64_t d = atomic_load(&ei_test_discard_delay_ns);
+    if (d > 0) {
+      struct timespec ts = {(time_t)(d / 1000000000), (long)(d % 1000000000)};
+      nanosleep(&ts, NULL);
+    }
+  }
+#endif
   if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
   pthread_mutex_lock(&stk_mu);
   bool room = stk_cached < EI_STACK_CACHE;

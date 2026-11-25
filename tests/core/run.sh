@@ -123,6 +123,8 @@ core O2 -O2
 prof O2 -O2
 proftask O2 -O2
 proftask ucontext -O2 -DEI_TASK_UCONTEXT
+# the stack cache discards a finished task's pages before publishing its stack (decision C917): the hook widens the window
+task hooks -O2 -DEI_RT_TEST_HOOKS
 task O2 -O2
 task ucontext -O2 -DEI_TASK_UCONTEXT
 prof count-allocs -O0 -DEI_RT_COUNT_ALLOCS
