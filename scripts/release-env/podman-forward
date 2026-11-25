@@ -32,7 +32,11 @@ PY
       case "$1" in
         --name) name=$2; shift 2 ;;
         --entrypoint) tls=1; shift 2 ;;
-        -p|-e|-v|--security-opt) shift 2 ;;
+        -v) # pg-up.sh --tls regenerated the certificates here; the server on the host uses the ones pg-hatchd.sh made: put those back
+            src=${2%%:*}
+            [ -d /work/.pg-pki ] && [ -d "$src" ] && cp -a /work/.pg-pki/. "$src"/
+            shift 2 ;;
+        -p|-e|--security-opt) shift 2 ;;
         -d|--rm) shift ;;
         *) break ;;
       esac

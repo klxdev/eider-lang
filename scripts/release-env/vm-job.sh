@@ -16,6 +16,10 @@ if [ -n "$EIDER_PG_FORWARD" ]; then # PostgreSQL servers started on the host by 
   extra="PATH=/usr/local/libexec/podman-shim:$PATH"
 fi
 cd /work/eider-lang || exit 1
+# build the crypto backend once, before any leg: the first use prints a "compiled in N s" line that fails tests comparing output
+if [ -d target/crypto/awslc-src ]; then
+  setpriv --reuid=tester --regid=tester --init-groups env HOME=/home/tester sh scripts/crypto-build.sh awslc >/dev/null 2>&1 || true
+fi
 # setpriv, not runuser: runuser's PAM resets the descriptor limit raised above
 # EIDER_SYSROOT: the image's musl sysroot (the cross leg); EIDER_CLANG_FETCH: download the other clang versions of the llvms leg
 # (17, 20, 23), which a release needs (a skipped leg stops release.sh)

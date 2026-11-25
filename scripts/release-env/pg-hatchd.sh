@@ -14,7 +14,9 @@ case "$1" in
   up)
     ws=$(cd "$2" && pwd -P) || exit 1
     sh "$ws/eider-postgres/scripts/pg-up.sh" || exit $?
-    EIDER_PG_NAME=eider-pg-tls sh "$ws/eider-postgres/scripts/pg-up.sh" --tls || exit $? ;;
+    EIDER_PG_NAME=eider-pg-tls sh "$ws/eider-postgres/scripts/pg-up.sh" --tls || exit $?
+    # the certificates the TLS server uses: the VM's podman-forward puts them back after its own pg-up.sh --tls regenerates them
+    rm -rf "$ws/.pg-pki"; mkdir -p "$ws/.pg-pki" && cp -a "$ws/eider-postgres/target/pg/pki/." "$ws/.pg-pki/" ;;
   down)
     hatchd rm -f eider-pg-test eider-pg-tls >/dev/null 2>&1 ;;
   *) echo "usage: pg-hatchd.sh up <workspace> | down" >&2; exit 2 ;;
