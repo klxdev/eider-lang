@@ -65,12 +65,20 @@ Checked today: the rules above by the corpus; every run test under ASan+UBSan, a
 works (Fedora 45's does not: `longjmp`; the Fedora 44 container in `scripts/release-env/` does); the C core under the
 same sanitizers; a mutation fuzzer for the compiler (`packages/fuzz`).
 
-**Not yet** (each is a workstream of #246): a differential check of the LLVM backend against the interpreter;
-sanitizer runs of the programs the fuzzer's checker accepts; machine-checked buffer and count invariants in the C core;
-a *proof* that the compiler's list of crossing points is complete (today: handle counts (`Task`, `Mutex`, `Chan`) are atomic;
-buffer counts are not, and every crossing point applies a generated `own_` glue that makes the value deeply unique;
-the crossing points are tested under TSan, `tests/safety/run/s11_crossing_points.ei`, but a point nobody thought of would
-not be); a detector for an FFI overrun beyond the canary, for reads, or for buffers C keeps; a formal model of the protection rule and copy-on-write.
+Also checked now (#246): the programs the checker accepts are built and run under ASan+UBSan with the C-core invariant
+checks (`SAN=1 scripts/fuzz-check.sh`; 60,000 mutants, 4,468 programs run, no report, 2026-11-23); the compile-time
+interpreter is compared with the compiled code on 100,000 generated total integer functions (`tests/safety/diff`, no
+difference); an overrun by C of an `inout List[u8]` is caught (S12); the process code of the C core was audited
+(`c-core-audit.md`, two bugs fixed).
+
+**Not yet** (each is an open part of #246): a differential check that covers more than integer arithmetic (lists,
+records, strings, closures, `Map`), and one that compares the LLVM backend with a *checked-store* interpreter; machine-checked
+buffer and count invariants in the C core (CBMC or Frama-C is not installed here); a *proof* that the compiler's list of
+crossing points is complete (today: handle counts (`Task`, `Mutex`, `Chan`) are atomic; buffer counts are not, and every
+crossing point applies a generated `own_` glue that makes the value deeply unique; the crossing points are tested under
+TSan, `tests/safety/run/s11_crossing_points.ei`, but a point nobody thought of would not be); a detector for an FFI
+overrun beyond the canary, for reads, or for buffers C keeps; a formal model of the protection rule and copy-on-write
+(`formal-model.md`: planned, no proof assistant installed).
 
 ## Where the rules are tested for this specification
 
