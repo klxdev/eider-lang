@@ -17,7 +17,9 @@ if [ -n "$EIDER_PG_FORWARD" ]; then # PostgreSQL servers started on the host by 
 fi
 cd /work/eider-lang || exit 1
 # setpriv, not runuser: runuser's PAM resets the descriptor limit raised above
-setpriv --reuid=tester --regid=tester --init-groups env HOME=/home/tester $extra "$@"
+# EIDER_SYSROOT: the image's musl sysroot (the cross leg); EIDER_CLANG_FETCH: download the other clang versions of the llvms leg
+# (17, 20, 23), which a release needs (a skipped leg stops release.sh)
+setpriv --reuid=tester --regid=tester --init-groups env HOME=/home/tester EIDER_SYSROOT=/opt/musl-sysroot EIDER_CLANG_FETCH=1 $extra "$@"
 rc=$?
 # files the caller asked for go back to the host through the writable bind (root writes it)
 for f in $VM_COLLECT; do mkdir -p "/out/$(dirname "$f")" && cp -a "/work/eider-lang/$f" "/out/$f" || echo "vm-job: cannot collect $f"; done
