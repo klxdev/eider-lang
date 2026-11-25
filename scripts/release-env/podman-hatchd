@@ -1,0 +1,51 @@
+#!/bin/sh
+# A `podman` for hatchd, for the host side of the release environment: it lets eider-postgres's scripts/pg-up.sh start its
+# PostgreSQL servers as hatchd VMs, unchanged (pg-up.sh and pg-down.sh only use image exists, pull, rm -f, run -d, exec and
+# logs). The VMs go on a hatchd network, each at a fixed address ($PGH_IP, default by name), so the verify VM, which is
+# on the same network and cannot call hatchd, can reach them (see podman-forward). Used by pg-hatchd.sh; put it first on
+# the PATH as `podman`.
+NET=${PGH_NET:-eiderpg}
+img_name() { # docker.io/library/postgres:17 -> postgres-17
+  n=${1##*/}; echo "$n" | tr ':.' '--'
+}
+case "$1" in
+  image) # image exists <ref>
+    n=$(img_name "$3"); hatchd image list 2>/dev/null | awk '{print $1}' | grep -qx "$n" ;;
+  pull)
+    shift; [ "$1" = -q ] && shift
+    hatchd image pull "$1" --name "$(img_name "$1")" ;;
+  rm) # rm -f NAME...
+    shift; [ "$1" = -f ] && shift
+    hatchd rm -f "$@" >/dev/null 2>&1; exit 0 ;;
+  logs) shift; hatchd logs "$@" ;;
+  exec)
+    shift; flags=
+    while [ "$1" = -i ] || [ "$1" = -t ]; do flags="$flags -i"; shift; done
+    name=$1; shift
+    exec hatchd exec "$name" $flags -- "$@" ;;
+  run)
+    shift
+    name= env= files= entry= ip=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -d|--rm) shift ;;
+        --name) name=$2; shift 2 ;;
+        -p) shift 2 ;; # the VM has an address on the network instead of a published port
+        -e) env="$env --env $2"; shift 2 ;;
+        --security-opt) shift 2 ;;
+        --entrypoint) entry="--entrypoint $2"; shift 2 ;;
+        -v) # host-dir:guest-dir[:ro] -> one --file per file in the directory (a pulled image takes files, not a bind)
+            src=${2%%:*}; rest=${2#*:}; dst=${rest%%:*}
+            for f in "$src"/*; do [ -f "$f" ] && files="$files --file $f:$dst/$(basename "$f"):0644"; done
+            shift 2 ;;
+        -*) echo "podman-hatchd: unsupported option $1" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    image=$(img_name "$1"); shift
+    case "$name" in *tls*) ip=${PGH_IP_TLS:-10.89.3.11} ;; *) ip=${PGH_IP:-10.89.3.10} ;; esac
+    hatchd network list 2>/dev/null | awk '{print $1}' | grep -qx "$NET" || hatchd network create "$NET" --subnet "${PGH_SUBNET:-10.89.3.0/24}" >/dev/null
+    # shellcheck disable=SC2086
+    hatchd run "$name" --image "$image" --exec --rm -d --network "$NET:$ip" --vcpus "${PGH_VCPUS:-2}" --mem "${PGH_MEM:-2048}" $env $files $entry -- "$@" ;;
+  *) echo "podman-hatchd: unsupported command $1" >&2; exit 2 ;;
+esac

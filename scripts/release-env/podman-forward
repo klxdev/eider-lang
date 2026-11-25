@@ -1,0 +1,46 @@
+#!/bin/sh
+# A `podman` for the verify VM (which is on the hatchd network and cannot call hatchd): the PostgreSQL servers were started
+# on the host (pg-hatchd.sh up) with their roles and pg_hba.conf, so "starting" one here is forwarding 127.0.0.1:$EIDER_PG_PORT
+# to its address. The TLS server (pg-up.sh --tls runs the container with --entrypoint sh) is $PGH_IP_TLS, the other $PGH_IP.
+# image exists, rm, exec and logs succeed without doing anything (the roles are already made).
+PORT=${EIDER_PG_PORT:-55432}
+dir=${TMPDIR:-/tmp}/podman-forward
+mkdir -p "$dir"
+case "$1" in
+  image) exit 0 ;;
+  pull) exit 0 ;;
+  logs) exit 0 ;;
+  rm) shift; [ "$1" = -f ] && shift
+      for n in "$@"; do [ -f "$dir/$n.pid" ] && kill "$(cat "$dir/$n.pid")" 2>/dev/null; rm -f "$dir/$n.pid"; done; exit 0 ;;
+  exec)
+    shift; while [ "$1" = -i ] || [ "$1" = -t ]; do shift; done; name=$1; shift
+    case "$1" in
+      pg_isready) python3 - "$PORT" <<'PY'
+import socket, sys
+s = socket.socket(); s.settimeout(2)
+try:
+    s.connect(("127.0.0.1", int(sys.argv[1]))); sys.exit(0)
+except OSError:
+    sys.exit(2)
+PY
+        exit $? ;;
+      *) cat >/dev/null 2>&1 </dev/null; exit 0 ;; # psql (roles), pg_hba.conf, reload: done on the host
+    esac ;;
+  run)
+    shift; name=; tls=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name=$2; shift 2 ;;
+        --entrypoint) tls=1; shift 2 ;;
+        -p|-e|-v|--security-opt) shift 2 ;;
+        -d|--rm) shift ;;
+        *) break ;;
+      esac
+    done
+    if [ "$tls" = 1 ]; then target=${PGH_IP_TLS:-10.89.3.11}; else target=${PGH_IP:-10.89.3.10}; fi
+    old=$dir/$name.pid; [ -f "$old" ] && kill "$(cat "$old")" 2>/dev/null
+    setsid python3 "$(dirname "$0")/tcp-forward.py" "$PORT" "$target" 5432 >/dev/null 2>&1 </dev/null &
+    echo $! > "$dir/$name.pid"
+    echo "forward-$name" ;;
+  *) echo "podman-forward: unsupported command $1" >&2; exit 2 ;;
+esac

@@ -114,7 +114,8 @@ if [ "$1" = "--leg" ]; then
     # and the bounded model checking of the C core's buffer code. Both skip, with the reason, where the tool is absent, and a
     # release does not go out with them skipped (release.sh): the release image (scripts/release-env/) has Lean and CBMC
     sh scripts/proofs.sh
-    sh tests/cbmc/run.sh ;;
+    sh tests/cbmc/run.sh
+    sh scripts/release-env/check-sync.sh ;;
   gcc|clang|asan|tsan) runtests $leg ;;
   llvms)
     # llvms: the compiler built, the compile-fail suite and the run tests with the other clang

@@ -1,13 +1,55 @@
-# A build environment for verifying and releasing Eider
+# The Eider verify and release environment
 
-`scripts/verify.sh` runs every sanitizer, several clang versions, the debuggers and the Postgres tests; a release
-(`scripts/publish.sh`) refuses to run unless every leg runs. That needs a toolchain whose ThreadSanitizer works.
-**Fedora 45's glibc breaks TSan's `longjmp`** (`ThreadSanitizer: can't find longjmp buf`; a six-line C program
-reproduces it), so on Fedora 45 the TSan legs are skipped (and a release is refused). Fedora 44, which made 0.7.6,
-works. `Containerfile` is that environment, with everything the matrix and the release need (including Lean 4 for the
-proofs, `scripts/proofs.sh`). It is kept in the repository so the same environment can be rebuilt for testing and releasing.
+`scripts/verify.sh` runs every sanitizer, several clang versions, the debuggers, the Lean proofs, CBMC and the Postgres tests; a
+release (`scripts/publish.sh`) refuses to run unless every leg runs. That needs a toolchain whose ThreadSanitizer works.
+**Fedora 45's glibc breaks TSan's `longjmp`** (`ThreadSanitizer: can't find longjmp buf`; a six-line C program reproduces it),
+so on Fedora 45 the TSan legs skip. Fedora 44 works. This directory is that environment, as one package list
+(`packages.txt`) shared by three things, with no Dockerfile at the repository root (it would be a fourth copy to keep in step):
 
-## Running a job with hatchd (the preferred way; podman below is the fallback)
+| File | What |
+|---|---|
+| `packages.txt` | the dnf packages (clang 22, the sanitizers, gdb, lldb, CBMC, a musl sysroot, node, git, gh, minisign ...) |
+| `eider-release.yaml` | the hatchd image recipe (preferred): `hatchd image build scripts/release-env/eider-release.yaml --name eider-release` |
+| `Containerfile` | the same for podman or docker: `podman build -t eider-release:44 -f scripts/release-env/Containerfile scripts/release-env` |
+| `vm-run.sh`, `vm-job.sh` | run a command in a hatchd VM from that image (below) |
+| `pg-hatchd.sh`, `podman-hatchd`, `podman-forward`, `tcp-forward.py` | PostgreSQL 17 as hatchd VMs for the database tests (below) |
+| `check-sync.sh` | fails if the two recipes stop sharing `packages.txt` or pin different Lean versions |
+
+Lean 4.36.0 (`/opt/lean`, hash-checked) and CBMC are in the image; so is everything `verify.sh` calls.
+
+## For agents: run a command in the environment
+
+```sh
+W=/tmp/ws; mkdir -p $W
+for r in eider-lang eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-logging \
+         eider-command eider-http eider-rpc eider-openapi eider-compression eider-tls eider-postgres eider-sql \
+         eider-example-shopping-service; do git clone --branch main ../$r $W/$r; done      # clean clones: no host-built target/
+cp -r target/crypto/awslc-src $W/eider-lang/target/crypto/ 2>/dev/null   # sh scripts/fetch-awslc.sh first (hash-checked)
+cp -r ../tree-sitter-eider/node_modules ../tree-sitter-eider/parser.so $W/tree-sitter-eider/
+
+sh scripts/release-env/vm-run.sh $W sh scripts/proofs.sh                       # one thing
+WITH_PG=1 sh scripts/release-env/vm-run.sh $W env VERIFY_JOBS=4 sh scripts/verify.sh   # the full matrix, with PostgreSQL
+```
+
+`vm-run.sh` copies the workspace onto the VM's disk, runs the command in `eider-lang/` as an unprivileged user and prints
+`vm-job: exit <n>`. What `vm-job.sh` sets that a bare VM lacks (each one found by a failing run): `vm.max_map_count=1048576` (the
+default makes the core `task (tsan)` tests fail with ENOMEM), the loopback interface up (the server tests connect to 127.0.0.1),
+`ulimit -n 1048576` (1024 descriptors are too few) kept with `setpriv` (`runuser` resets it), and a copy of the workspace on the VM's
+own disk (a 9P bind is root-owned and read-only). A build step cannot start Lean in the image build VM (too little memory), so the
+recipe does not check it; `vm-run.sh $W lean --version` does. Run long jobs in the background and read their log; never remove a VM
+you did not start (`hatchd list`).
+
+## PostgreSQL
+
+The verify VM cannot call hatchd and cannot reach the host's loopback, so `WITH_PG=1` starts the servers on the host first:
+`pg-hatchd.sh up <workspace>` runs eider-postgres's real `scripts/pg-up.sh` (plain, then `--tls`) through `podman-hatchd`, a `podman`
+that translates `run -d`, `exec`, `logs`, `rm -f`, `pull` and `image exists` to hatchd, so the two servers are hatchd VMs at fixed
+addresses on the network `eiderpg` (10.89.3.10 plain, 10.89.3.11 TLS), with their roles and `pg_hba.conf` made by the unchanged script.
+The verify VM joins that network, and inside it `podman-forward` stands in for `podman`: starting a server forwards
+`127.0.0.1:55432` to the right address (`tcp-forward.py`), and the role setup is skipped because the host did it. `vm-run.sh` stops
+the servers when it ends (`pg-hatchd.sh down`).
+
+## By hand with hatchd (what vm-run.sh does)
 
 `eider-release.yaml` is the same environment as a hatchd image (Fedora 44, Lean 4.36.0, CBMC, a TSan-capable clang). Build it
 once, then run any job in a Firecracker VM with the repository bound in:

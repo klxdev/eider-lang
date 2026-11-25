@@ -1,24 +1,21 @@
-# A Fedora 44 build environment for releasing Eider (the machine that made 0.7.6 was Fedora 44; Fedora 45's
-# glibc breaks ThreadSanitizer's longjmp, so the TSan legs of verify.sh cannot run there).
+# The Eider verify and release environment: Fedora 44 (Fedora 45's glibc 2.44 breaks ThreadSanitizer's longjmp, so the TSan
+# legs of verify.sh cannot run there), with the sanitizers, clang 22, Lean 4 and CBMC (the memory-safety legs), a musl
+# sysroot (the cross leg) and everything the verify legs call. The package list is packages.txt, shared with the hatchd
+# recipe (eider-release.yaml), so the two cannot drift: scripts/release-env/check-sync.sh checks it.
+#   podman build -t eider-release:44 -f scripts/release-env/Containerfile scripts/release-env      (docker build works the same)
+# README.md says how to run a job in it, with hatchd (preferred) or podman.
 FROM docker.io/library/fedora:44
-RUN dnf -y --setopt=install_weak_deps=False install \
-      gcc gcc-c++ make cmake clang lld llvm compiler-rt libasan libubsan libtsan libatomic glibc-devel \
-      nodejs gdb lldb git gh minisign curl tar gzip xz bzip2 which file binutils diffutils findutils \
-      procps-ng openssl e2fsprogs python3 perl patch podman-remote util-linux iproute \
-    && dnf clean all \
+COPY packages.txt /tmp/packages.txt
+RUN dnf -y --setopt=install_weak_deps=False install $(cat /tmp/packages.txt) && dnf clean all && rm /tmp/packages.txt \
     && ln -sf /usr/bin/podman-remote /usr/local/bin/podman
 # a musl sysroot for the `cross` verify leg (tests/cross): usr/include and usr/lib as clang --sysroot expects
-RUN dnf -y --setopt=install_weak_deps=False install musl-libc-static musl-devel && dnf clean all \
-    && mkdir -p /opt/musl-sysroot/usr && ln -s /usr/x86_64-linux-musl/include /opt/musl-sysroot/usr/include \
+RUN mkdir -p /opt/musl-sysroot/usr && ln -s /usr/x86_64-linux-musl/include /opt/musl-sysroot/usr/include \
     && ln -s /usr/x86_64-linux-musl/lib64 /opt/musl-sysroot/usr/lib
-# Lean 4 for the formal model of the memory-safety rules (docs/design/formal-model.md, scripts/proofs.sh): the pinned release,
-# checked against its published SHA-256, in /opt/lean (no elan: nothing is written at run time, so any user can run it)
+# Lean 4 for the proofs (proofs/, scripts/proofs.sh): the pinned release, checked against its published SHA-256, in /opt/lean
+# (no elan: nothing is written at run time, so any user can run it)
 ARG LEAN_VERSION=4.36.0
 ARG LEAN_SHA256=2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb
-RUN dnf -y --setopt=install_weak_deps=False install zstd && dnf clean all \
-    && curl -fsSL -o /tmp/lean.tar.zst https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-linux.tar.zst \
-    && echo "${LEAN_SHA256}  /tmp/lean.tar.zst" | sha256sum -c - \
-    && mkdir -p /opt/lean && tar --zstd -xf /tmp/lean.tar.zst -C /opt/lean --strip-components=1 && rm /tmp/lean.tar.zst \
-    && ln -s /opt/lean/bin/lean /usr/local/bin/lean && ln -s /opt/lean/bin/lake /usr/local/bin/lake && lean --version
-# CBMC, the bounded model checker for the proofs about the C core's buffer code (tests/cbmc/run.sh, docs/design/c-core-audit.md)
-RUN dnf -y --setopt=install_weak_deps=False install cbmc && dnf clean all && cbmc --version
+RUN curl -fSL --retry 3 -o /var/tmp/lean.tar.zst https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-linux.tar.zst \
+    && echo "${LEAN_SHA256}  /var/tmp/lean.tar.zst" | sha256sum -c - \
+    && mkdir -p /opt/lean && tar --zstd -xf /var/tmp/lean.tar.zst -C /opt/lean --strip-components=1 && rm /var/tmp/lean.tar.zst \
+    && ln -s /opt/lean/bin/lean /usr/local/bin/lean && ln -s /opt/lean/bin/lake /usr/local/bin/lake && lean --version && cbmc --version

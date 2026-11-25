@@ -1,0 +1,4 @@
+gcc gcc-c++ make cmake clang lld llvm compiler-rt libasan libubsan libtsan libatomic glibc-devel
+nodejs gdb lldb git gh minisign curl tar gzip xz bzip2 which file binutils diffutils findutils
+procps-ng openssl e2fsprogs python3 perl patch util-linux iproute zstd
+cbmc musl-libc-static musl-devel podman-remote
