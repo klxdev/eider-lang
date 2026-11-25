@@ -14,6 +14,7 @@ case "$1" in
       for n in "$@"; do [ -f "$dir/$n.pid" ] && kill "$(cat "$dir/$n.pid")" 2>/dev/null; rm -f "$dir/$n.pid"; done; exit 0 ;;
   exec)
     shift; while [ "$1" = -i ] || [ "$1" = -t ]; do shift; done; name=$1; shift
+    [ -f "$dir/$name.port" ] && PORT=$(cat "$dir/$name.port") # the port this server was started on
     case "$1" in
       pg_isready) python3 - "$PORT" <<'PY'
 import socket, sys
@@ -45,7 +46,7 @@ PY
     if [ "$tls" = 1 ]; then target=${PGH_IP_TLS:-10.89.3.11}; else target=${PGH_IP:-10.89.3.10}; fi
     old=$dir/$name.pid; [ -f "$old" ] && kill "$(cat "$old")" 2>/dev/null
     setsid python3 "$(dirname "$0")/tcp-forward.py" "$PORT" "$target" 5432 >/dev/null 2>&1 </dev/null &
-    echo $! > "$dir/$name.pid"
+    echo $! > "$dir/$name.pid"; echo "$PORT" > "$dir/$name.port"
     echo "forward-$name" ;;
   *) echo "podman-forward: unsupported command $1" >&2; exit 2 ;;
 esac
