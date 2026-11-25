@@ -38,6 +38,9 @@ fi
 # a C overrun of an inout List[u8] is caught (workstream F)
 sh tests/safety/ffi/run.sh "$E" || fail=1
 
+# the compile-time interpreter against the compiled code (workstream C)
+sh tests/safety/diff/run.sh "$E" 10 60 || fail=1
+
 # rule -> where its tests must be (fail, pass, run); S3 (the type system) and S13 (compiler/tests/run/stack_overflow*.ei,
 # core/RUNTIME.md "Stack overflow") are tested elsewhere
 need() { # rule dirs...

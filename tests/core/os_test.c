@@ -621,6 +621,11 @@ static void test_spawn_ex(void) {
   path_in(inp, sizeof inp, "input.txt");
   path_in(dir, sizeof dir, "cwd");
   CHECK(mkdir(dir, 0755) == 0);
+  /* counts that would overflow the string count are refused, not computed (signed overflow) */
+  strs("true", NULL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 2147483647, 2147483647), -EINVAL);
+  EQI(ec_spawn_ex(0, 0, 0, 0, 1, 2147483647), -EINVAL);
+  EQI(ec_run_ex(0, 0, 0, 0, 2147483647, 2147483647), -EINVAL);
   /* stdout and stderr to one file (2>&1), in order; the child has no shell wrapper around it */
   strs("sh", "-c", "echo out1; echo err1 >&2; echo out2", log, NULL);
   int64_t pid = ec_spawn_ex(0, SPEC(3, 0), 6, 0, 3, 0);

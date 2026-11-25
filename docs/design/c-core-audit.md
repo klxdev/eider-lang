@@ -53,6 +53,25 @@ harness.
   cannot be met traps ("out of memory") and never wraps.
 - **I6 (task stacks).** A task's saved stack pointer is inside its mapping; the guard page is below it and has no access.
 
+## R5 audit: `ec_spawn_ex`, `ec_run_ex`, `ec_wait` (2026-11-25)
+
+Read line by line for descriptor ownership on every error path and for what runs after `fork`.
+
+- **Ownership: correct.** Every pipe, `/dev/null` and file descriptor is closed on each path (open failure, `fork`
+  failure, child failure before exec, success); `close_fd` sets the slot to -1, so a double close is not possible.
+  The child's exec-failure pipe is close-on-exec, so a successful exec closes it and the parent reads end of file.
+- **Fixed: `argc + envc` overflowed a signed `int`** (`nstr`) in `ec_spawn_ex` and `ec_run_ex` for counts near
+  `INT32_MAX`: undefined behaviour reachable from the ABI. Both now refuse more than 100,000,000 of either
+  (`SPAWN_MAX_STRINGS`) with `-EINVAL`; `tests/core/os_test.c` checks it.
+- **Fixed: a silent failed start.** If the child could not lift its report pipe above descriptor 2 (`F_DUPFD_CLOEXEC`
+  failed, for example `EMFILE`) it exited 127 without writing a report, so the parent saw end of file and returned the
+  pid as a successful start. It now reports `SP_STDIO` and the errno on the pipe first.
+- **Not a bug, noted: `execvp` after `fork`.** POSIX does not list `execvp` as async-signal-safe; glibc and musl
+  implement it without `malloc` (it is what `posix_spawnp` does), and the environment is set up before it. Resolving
+  `PATH` before the fork would remove the dependency; not done.
+- The one remaining unsafe-looking write, `EC_ENVIRON = envp` in the child, only changes the child's copy of the
+  address space.
+
 ## Plan for this part
 
 1. **Assert I1 to I5** in the C core under `-DEI_RT_CHECK_INVARIANTS` (on in the sanitizer and hardened builds); run the
@@ -60,8 +79,7 @@ harness.
 2. **Bounded model checking** of the R1 functions with CBMC (or Frama-C/WP) once it is installed: `ei_buf_alloc/grow`,
    `ei_grow_cap`, `ei_str_cat`, `ei_str_slice`, the list push/grow glue, `arg`, `out_put`. Proof of I1 to I5 for all
    lengths up to a bound and overflow-freedom for all 64-bit inputs.
-3. **R5**: an audit of `ec_spawn_ex` and `ec_run_ex` for descriptor ownership on every error path and for
-   async-signal-safety after `fork` (written in 0.7.7; tested with 600+ checks, never reviewed by anyone else).
+3. **R5**: done, see the section above (two bugs fixed).
 4. **R2/R3**: review of the context switch and the guard-page logic against #196's lesson (a frame can jump a guard);
    a stress test that runs under TSan on a system where TSan works.
 5. Move pieces into an audited `unsafe` Eider layer where the code is simple enough, so the C part shrinks.

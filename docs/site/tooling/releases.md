@@ -195,6 +195,13 @@ with `sh scripts/publish.sh <version> --allow-skipped-legs` (`release.sh` takes 
 release says so, in `skipped_legs` of RELEASE.toml and in the release notes, which list each skipped
 leg. `--skip-verify` is different: it builds nothing that may be released.
 
+### What a release says about memory safety
+
+A release's `CHANGELOG.md` section has a **Soundness** line when it fixes a violation of the memory-safety claim
+(`docs/design/soundness-policy.md`), and its notes name the sanitizer legs that ran (ASan+UBSan, TSan) and any that
+were skipped, and the sanitizer fuzzing budget of the accepted-program corpus (`SAN=1 scripts/fuzz-check.sh`) with its
+result. An S0 or S1 soundness fix is the release's first item.
+
 ### What scripts/release.sh builds
 
 ```sh

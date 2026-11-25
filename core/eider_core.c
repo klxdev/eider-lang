@@ -2232,6 +2232,7 @@ extern char **environ;
 #define SPAWN_CLEAR_ENV 4
 #define SPAWN_CWD 8
 #define SPAWN_MODES 0xff
+#define SPAWN_MAX_STRINGS 100000000 /* arguments or environment entries: far above any ARG_MAX */
 enum { SP_FORK = 0, SP_OPEN = 10 /* + stream 0..2 */, SP_CHDIR = 20, SP_SESSION = 21, SP_STDIO = 22, SP_EXEC = 23 };
 
 /* The child's environment: ours without the names `ent` sets, then `ent` (NAME=value); or only
@@ -2270,6 +2271,7 @@ EC_FN(int64_t, ec_spawn_ex, (int32_t in_spec, int32_t out_spec, int32_t err_spec
   int mode[3], sfd[3];
   out_len = 0;
   if (argc < 1 || envc < 0 || flags < 0 || flags > 15) return -EINVAL;
+  if (argc > SPAWN_MAX_STRINGS || envc > SPAWN_MAX_STRINGS) return -EINVAL; /* nstr below cannot overflow */
   int nstr = argc + envc + ((flags & SPAWN_CWD) ? 1 : 0);
   for (int k = 0; k < 3; k++) {
     if (spec[k] < 0) return -EINVAL;
@@ -2349,7 +2351,11 @@ EC_FN(int64_t, ec_spawn_ex, (int32_t in_spec, int32_t out_spec, int32_t err_spec
     int src[3];
     for (int k = 0; k < 3; k++)
       src[k] = above_stdio(mode[k] == 2 ? p[k][k == 0 ? 0 : 1] : mode[k] == 1 ? nul : (mode[k] == 3 || mode[k] == 4) ? fsrc[k] : mode[k] == 5 ? sfd[k] : -1);
-    if (x < 0) _exit(127);
+    if (x < 0) { /* no descriptor to spare: report on the pipe itself, so the parent sees a failed start, not a child that exited 127 */
+      int e[2] = {SP_STDIO, errno};
+      (void)!write(xp[1], e, sizeof e);
+      _exit(127);
+    }
     int rep[2];
 #define SPAWN_FAIL(st) \
   do { \
@@ -2559,6 +2565,7 @@ EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms))
 EC_FN(int64_t, ec_run_ex, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms, int32_t flags, int32_t argc, int32_t envc)) {
   out_len = 0;
   if (out_mode < 0 || out_mode > 1 || err_mode < 0 || err_mode > 1 || argc < 1 || envc < 0) return -EINVAL;
+  if (argc > SPAWN_MAX_STRINGS || envc > SPAWN_MAX_STRINGS) return -EINVAL;
   if (flags < 0 || (flags & ~(SPAWN_NEW_SESSION | SPAWN_CLEAR_ENV | SPAWN_CWD | 16))) return -EINVAL;
   int nstr = argc + envc + ((flags & SPAWN_CWD) ? 1 : 0);
   size_t pos = 0;

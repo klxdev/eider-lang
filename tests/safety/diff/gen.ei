@@ -1,0 +1,100 @@
+// A generator of total integer programs for the differential check of the two evaluators (workstream C of #246):
+// every function is evaluated twice, by the compile-time interpreter (`const C = comptime f(...)`, compiler/interp.ei)
+// and by the compiled code (the same call at run time), and main reports any pair that differs.
+// The generated operations never trap (wrapping arithmetic, divisors forced into 1..8, shift counts 0..3), so a
+// difference is a bug in one of the two implementations of the language, not a legitimate trap.
+//   gen.ei SEED COUNT        prints the program; every function is on one of the integer types
+import std.env
+import std.bytes
+
+type Rng = { s: u64 }
+
+fn next(inout r: Rng) -> u64 {
+    let mut x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+fn pick(inout r: Rng, n: u64) -> u64 { next(inout r) % n }
+
+fn var(inout r: Rng) -> String {
+    let k = pick(inout r, 3)
+    if k == 0 { return String.from("a") }
+    if k == 1 { return String.from("b") }
+    String.from("c")
+}
+
+fn lit(inout r: Rng, ty: str, signed: bool) -> String {
+    let v = pick(inout r, 100)
+    if signed && pick(inout r, 4) == 0 { return "((0 as {ty}) -% ({v} as {ty}))" }
+    "({v} as {ty})"
+}
+
+fn expr(inout r: Rng, ty: str, signed: bool, d: u64) -> String {
+    if d == 0 || pick(inout r, 5) == 0 {
+        if pick(inout r, 3) == 0 { return lit(inout r, ty, signed) }
+        return var(inout r)
+    }
+    let k = pick(inout r, 12)
+    let x = expr(inout r, ty, signed, d - 1)
+    let y = expr(inout r, ty, signed, d - 1)
+    if k == 0 { return "({x} +% {y})" }
+    if k == 1 { return "({x} -% {y})" }
+    if k == 2 { return "({x} *% {y})" }
+    if k == 3 { return "({x} & {y})" }
+    if k == 4 { return "({x} | {y})" }
+    if k == 5 { return "({x} ^ {y})" }
+    if k == 6 { return "({x} / (({y} & 7) + 1))" }
+    if k == 7 { return "({x} % (({y} & 7) + 1))" }
+    if k == 8 { return "({x} << ({y} & 3))" }
+    if k == 9 { return "({x} >> ({y} & 3))" }
+    if k == 10 {
+        let z = expr(inout r, ty, signed, d - 1)
+        return "lt_{ty}({x}, {y}, {z}, {x})"
+    }
+    "eq_{ty}({x}, {y}, 1, {x})"
+}
+
+fn main() uses io {
+    let argv = env.args()
+    let mut r = Rng(1)
+    let mut count: u64 = 100
+    if argv.len() > 1 {
+        match bytes.parse_u64(argv[1]) {
+            Some(n) => { r = Rng(n * 2654435761 + 88172645463325252) }
+            None => {}
+        }
+    }
+    if argv.len() > 2 {
+        match bytes.parse_u64(argv[2]) {
+            Some(n) => { count = n }
+            None => {}
+        }
+    }
+    for t in ["i32", "i64", "u8", "u32", "u64"] {
+        print("fn lt_{t}(x: {t}, y: {t}, a: {t}, b: {t}) -> {t} {{ if x < y {{ return a }}\n    return b }}")
+        print("fn eq_{t}(x: {t}, y: {t}, a: {t}, b: {t}) -> {t} {{ if x == y {{ return a }}\n    return b }}")
+    }
+    let tys = ["i32", "i64", "u8", "u32", "u64"]
+    let mut main_body: List[String] = List.new()
+    for k in 0..count {
+        let ti = pick(inout r, 5) as usize
+        let ty = tys[ti]
+        let signed = ti < 2
+        let e = expr(inout r, ty, signed, 4)
+        let l1 = lit(inout r, ty, signed)
+        let l2 = lit(inout r, ty, signed)
+        let l3 = lit(inout r, ty, signed)
+        let args = "{l1}, {l2}, {l3}"
+        print("fn f{k}(a: {ty}, b: {ty}, c: {ty}) -> {ty} {{ {e} }}")
+        print("const C{k}: {ty} = comptime f{k}({args})")
+        main_body.push("    if C{k} != f{k}({args}) {{ print(\"MISMATCH f{k}\") }}")
+    }
+    print("fn main() uses io {{")
+    for l in main_body { print(l) }
+    print("    print(\"done\")")
+    print("}}")
+}
