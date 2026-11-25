@@ -1,0 +1,14 @@
+# The release and verify environment as a hatchd image (the same as Containerfile, which stays the podman recipe):
+#   hatchd image build scripts/release-env/eider-release.yaml --name eider-release
+# then see README.md ("Running a job with hatchd"). Fedora 44, because Fedora 45's glibc breaks ThreadSanitizer's longjmp.
+from: fedora-44
+size: 14G
+
+commands:
+  - dnf -y --setopt=install_weak_deps=False install gcc gcc-c++ make cmake clang lld llvm compiler-rt libasan libubsan libtsan libatomic glibc-devel nodejs gdb lldb git gh minisign curl tar gzip xz bzip2 which file binutils diffutils findutils procps-ng openssl e2fsprogs python3 perl patch util-linux iproute zstd cbmc musl-libc-static musl-devel
+  - dnf clean all
+  - mkdir -p /opt/musl-sysroot/usr && ln -s /usr/x86_64-linux-musl/include /opt/musl-sysroot/usr/include && ln -s /usr/x86_64-linux-musl/lib64 /opt/musl-sysroot/usr/lib
+  - curl -fSL --retry 3 -o /var/tmp/lean.tar.zst https://github.com/leanprover/lean4/releases/download/v4.36.0/lean-4.36.0-linux.tar.zst
+  - echo "2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb  /var/tmp/lean.tar.zst" | sha256sum -c -
+  - mkdir -p /opt/lean && tar --zstd -xf /var/tmp/lean.tar.zst -C /opt/lean --strip-components=1 && rm /var/tmp/lean.tar.zst
+  - ln -s /opt/lean/bin/lean /usr/local/bin/lean && ln -s /opt/lean/bin/lake /usr/local/bin/lake
