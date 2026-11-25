@@ -19,5 +19,7 @@ cd /work/eider-lang || exit 1
 # setpriv, not runuser: runuser's PAM resets the descriptor limit raised above
 setpriv --reuid=tester --regid=tester --init-groups env HOME=/home/tester $extra "$@"
 rc=$?
+# files the caller asked for go back to the host through the writable bind (root writes it)
+for f in $VM_COLLECT; do mkdir -p "/out/$(dirname "$f")" && cp -a "/work/eider-lang/$f" "/out/$f" || echo "vm-job: cannot collect $f"; done
 echo "vm-job: exit $rc"
 exit $rc
