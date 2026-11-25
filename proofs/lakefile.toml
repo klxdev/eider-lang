@@ -1,0 +1,5 @@
+name = "eider_proofs"
+defaultTargets = ["Eider"]
+
+[[lean_lib]]
+name = "Eider"

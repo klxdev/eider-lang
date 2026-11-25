@@ -97,6 +97,8 @@ if [ "$1" = "--leg" ]; then
     # run-time behaviour, and every rule having the tests it promises
     sh tests/safety/run.sh target/eiderc-next > $S/safety 2>&1 || grep -q "^FAIL" $S/safety || echo "FAIL safety: sh tests/safety/run.sh"
     cat $S/safety
+    # the Lean proofs of the safety model (docs/design/formal-model.md); skipped, with the reason, without Lean
+    sh scripts/proofs.sh
     printf 'int x;\n' > $S/wasm.c
     if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
       sh tests/wasm/run.sh || echo "FAIL tests/wasm"

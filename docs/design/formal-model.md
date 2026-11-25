@@ -50,10 +50,21 @@ Each stage is a theorem with its own proof, so the work can stop at any of them 
 
 ## The tool
 
-Lean 4 (mathlib for the finite-map and relation lemmas), because the proof is mostly structural induction over a small
+Lean 4 (core only so far; Mathlib for the finite-map lemmas when stage 2 needs it), because the proof is mostly structural induction over a small
 operational semantics and Lean's tactic and automation story is the most maintainable for a small team. Coq is the
-alternative if the maintainer prefers it; the statement does not change. **Neither is installed on the build machine** (checked
-2026-11-23: no `lean`, `lake`, `coqc`), so the first step of this workstream is a decision and an installation.
+alternative if the maintainer prefers it; the statement does not change. **Decided and installed (2026-11-25): Lean 4.36.0** in the Fedora 44 release image (`scripts/release-env/Containerfile`,
+`/opt/lean`, hash-checked; no `elan`). The project is `proofs/`; `scripts/proofs.sh` builds it (a verify leg that skips,
+with the reason, where Lean is absent):
+
+```sh
+podman run --rm --userns=keep-id --user $(id -u):$(id -g) --security-opt label=disable -e HOME=/tmp \
+  -v $PWD/proofs:/p -w /p eider-release:44 lake build
+```
+
+**Stage 1 is proved** (`proofs/Eider/Stage1.lean`, no `sorry`): for integers, immutable lists, `let` and a checked index,
+a typed expression in a fitting environment never gets stuck and its value has its type (`type_safety`); an index outside
+the list is a trap and one inside reads exactly that cell (`idx_out_of_range`, `idx_in_range`). It is the smallest
+fragment with the memory question in it: it has no aliases, mutation or threads. Those are stages 2 to 5.
 
 ## The executable semantics (the "Miri mode")
 

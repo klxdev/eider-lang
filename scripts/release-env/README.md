@@ -4,7 +4,8 @@
 (`scripts/publish.sh`) refuses to run unless every leg runs. That needs a toolchain whose ThreadSanitizer works.
 **Fedora 45's glibc breaks TSan's `longjmp`** (`ThreadSanitizer: can't find longjmp buf`; a six-line C program
 reproduces it), so on Fedora 45 the TSan legs are skipped (and a release is refused). Fedora 44, which made 0.7.6,
-works. `Containerfile` is that environment, with everything the matrix and the release need.
+works. `Containerfile` is that environment, with everything the matrix and the release need (including Lean 4 for the
+proofs, `scripts/proofs.sh`). It is kept in the repository so the same environment can be rebuilt for testing and releasing.
 
 ```sh
 podman build -t eider-release:44 scripts/release-env

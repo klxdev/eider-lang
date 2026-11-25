@@ -11,3 +11,12 @@ RUN dnf -y --setopt=install_weak_deps=False install \
 RUN dnf -y --setopt=install_weak_deps=False install musl-libc-static musl-devel && dnf clean all \
     && mkdir -p /opt/musl-sysroot/usr && ln -s /usr/x86_64-linux-musl/include /opt/musl-sysroot/usr/include \
     && ln -s /usr/x86_64-linux-musl/lib64 /opt/musl-sysroot/usr/lib
+# Lean 4 for the formal model of the memory-safety rules (docs/design/formal-model.md, scripts/proofs.sh): the pinned release,
+# checked against its published SHA-256, in /opt/lean (no elan: nothing is written at run time, so any user can run it)
+ARG LEAN_VERSION=4.36.0
+ARG LEAN_SHA256=2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb
+RUN dnf -y --setopt=install_weak_deps=False install zstd && dnf clean all \
+    && curl -fsSL -o /tmp/lean.tar.zst https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-linux.tar.zst \
+    && echo "${LEAN_SHA256}  /tmp/lean.tar.zst" | sha256sum -c - \
+    && mkdir -p /opt/lean && tar --zstd -xf /tmp/lean.tar.zst -C /opt/lean --strip-components=1 && rm /tmp/lean.tar.zst \
+    && ln -s /opt/lean/bin/lean /usr/local/bin/lean && ln -s /opt/lean/bin/lake /usr/local/bin/lake && lean --version
