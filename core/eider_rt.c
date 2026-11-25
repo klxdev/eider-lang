@@ -995,16 +995,16 @@ static void stack_put(ei_task *t) {
   unsigned char *m = t->map;
   t->map = NULL;
   if (!m) return;
+  /* give back what the task touched below the top, so cached stacks stay small: BEFORE the stack is
+     published in the cache. Once it is there another thread can take it for a new task at any
+     moment, and a discard that came after would zero that task's live frames (a parked task's wait
+     record, its return addresses): the crash was a stack that was cached, reused and then wiped. */
+  if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
   pthread_mutex_lock(&stk_mu);
   bool room = stk_cached < EI_STACK_CACHE;
   if (room) stk_cache[stk_cached++] = m;
   pthread_mutex_unlock(&stk_mu);
-  if (!room) {
-    munmap(m, t->map_len);
-    return;
-  }
-  /* give back what the task touched below the top, so cached stacks stay small */
-  if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
+  if (!room) munmap(m, t->map_len);
 }
 
 // ---- run queues
