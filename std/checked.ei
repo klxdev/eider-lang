@@ -4,6 +4,10 @@
 //! an overflow, a zero divisor, or `MIN / -1` (docs/site/reference/types.md, "Arithmetic and
 //! overflow"). Pure Eider over the wrapping operators; no capability.
 //!
+//! The same types have the wrapping family: `a.wrapping_add(b)`, `wrapping_sub`, `wrapping_mul`
+//! and `wrapping_neg`, the methods for the `+%`, `-%` and `*%` operators (the result modulo
+//! 2^bits). Use them for a generator or a hash that overflows on purpose.
+//!
 //! A service validates an untrusted number before it uses it, and a trap ends the service:
 //! `price.checked_mul(qty)` gives `None` for a quantity that overflows, which the caller
 //! answers as an error.
@@ -54,6 +58,15 @@ impl i32 {
         if self == -2147483648 { return None }
         Some(0 - self)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: i32) -> i32 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: i32) -> i32 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: i32) -> i32 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> i32 { 0 -% self }
 }
 
 impl i16 {
@@ -100,6 +113,15 @@ impl i16 {
         if self == -32768 { return None }
         Some(0 - self)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: i16) -> i16 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: i16) -> i16 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: i16) -> i16 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> i16 { 0 -% self }
 }
 
 impl i64 {
@@ -146,6 +168,15 @@ impl i64 {
         if self == -9223372036854775808 { return None }
         Some(0 - self)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: i64) -> i64 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: i64) -> i64 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: i64) -> i64 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> i64 { 0 -% self }
 }
 
 impl u8 {
@@ -177,6 +208,15 @@ impl u8 {
         if other == 0 { return None }
         Some(self % other)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: u8) -> u8 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: u8) -> u8 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: u8) -> u8 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> u8 { 0 -% self }
 }
 
 impl u16 {
@@ -208,6 +248,15 @@ impl u16 {
         if other == 0 { return None }
         Some(self % other)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: u16) -> u16 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: u16) -> u16 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: u16) -> u16 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> u16 { 0 -% self }
 }
 
 impl u32 {
@@ -239,6 +288,15 @@ impl u32 {
         if other == 0 { return None }
         Some(self % other)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: u32) -> u32 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: u32) -> u32 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: u32) -> u32 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> u32 { 0 -% self }
 }
 
 impl u64 {
@@ -270,6 +328,15 @@ impl u64 {
         if other == 0 { return None }
         Some(self % other)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: u64) -> u64 { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: u64) -> u64 { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: u64) -> u64 { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> u64 { 0 -% self }
 }
 
 impl usize {
@@ -301,4 +368,13 @@ impl usize {
         if other == 0 { return None }
         Some(self % other)
     }
+    /// `self + other` wrapped around: the sum modulo 2^bits (the `+%` operator).
+    fn wrapping_add(self, other: usize) -> usize { self +% other }
+    /// `self - other` wrapped around: the difference modulo 2^bits (the `-%` operator).
+    fn wrapping_sub(self, other: usize) -> usize { self -% other }
+    /// `self * other` wrapped around: the product modulo 2^bits (the `*%` operator), as a
+    /// linear congruential generator or a hash needs.
+    fn wrapping_mul(self, other: usize) -> usize { self *% other }
+    /// `0 - self` wrapped around (`MIN` stays `MIN`; for an unsigned type, 2^bits - self).
+    fn wrapping_neg(self) -> usize { 0 -% self }
 }

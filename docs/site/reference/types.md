@@ -147,6 +147,10 @@ for every integer type: `a.checked_add(b)`, `checked_sub`, `checked_mul`, `check
 type), and `checked_neg` for the signed types (`None` for `MIN`). A service can validate
 an untrusted number with them instead of a hand-written bounds test.
 
+The same import adds the wrapping family, the methods for `+%`, `-%` and `*%`:
+`a.wrapping_add(b)`, `wrapping_sub`, `wrapping_mul` and `wrapping_neg` (the result modulo
+2^bits). A generator or a hash that overflows on purpose uses them or the operators.
+
 ```eider
 import std.checked
 

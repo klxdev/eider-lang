@@ -199,6 +199,33 @@ fn t_u64() {
     assert (18446744073709551615 as usize).checked_add(1) == None
 }
 
+// The wrapping family is the `+%`, `-%`, `*%` operators as methods: the result modulo 2^bits, at
+// the edges of every type (#220).
+fn t_wrapping() {
+    assert (4000000000 as u32).wrapping_mul(3) == 3410065408
+    assert (4000000000 as u32).wrapping_add(500000000) == 205032704
+    assert (5 as u8).wrapping_sub(10) == 251
+    assert (255 as u8).wrapping_add(1) == 0
+    assert (65535 as u16).wrapping_mul(65535) == 1
+    assert (0 as u16).wrapping_sub(1) == 65535
+    assert (32767 as i16).wrapping_add(1) == -32768
+    assert (-32768 as i16).wrapping_sub(1) == 32767
+    assert (-32768 as i16).wrapping_neg() == -32768
+    assert (2147483647 as i32).wrapping_add(1) == -2147483648
+    assert (-2147483648 as i32).wrapping_sub(1) == 2147483647
+    assert (-2147483648 as i32).wrapping_neg() == -2147483648
+    assert (65536 as i32).wrapping_mul(65536) == 0
+    assert (3 as i32).wrapping_neg() == -3
+    assert (9223372036854775807 as i64).wrapping_add(1) == -9223372036854775807 - 1
+    assert (7 as u64).wrapping_neg() == 18446744073709551609
+    assert (0 as u64).wrapping_neg() == 0
+    assert (18446744073709551615 as usize).wrapping_add(2) == 1
+    // a linear congruential generator (the case that asked for them)
+    let mut x: u64 = 1
+    for _ in 0..3 { x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) }
+    assert x == 11960119808228829710
+}
+
 fn main() uses io {
     t_i32()
     t_u8()
@@ -207,5 +234,6 @@ fn main() uses io {
     t_u32()
     t_i64()
     t_u64()
+    t_wrapping()
     print("checked ok")
 }

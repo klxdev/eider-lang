@@ -179,6 +179,8 @@ ones (#144). Each returns `Option[T]`: `None` where the plain operator would tra
 overflow, a zero divisor, `MIN / -1`). They are Eider over the wrapping operators, so
 nothing in the compiler or runtime changed (docs/compiler.md "C8.74"); `tests/std/checked.ei`
 compares them with wider arithmetic for every `u8` pair and the edges of the other types.
+The same import adds `wrapping_add`, `wrapping_sub`, `wrapping_mul` and `wrapping_neg` for
+the same types: the methods for the `+%`, `-%` and `*%` operators (#220).
 
 ## Math (`std/math`)
 

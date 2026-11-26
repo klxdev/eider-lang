@@ -5,6 +5,15 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.10
+
+A checker crash fixed, wrapping arithmetic as methods, and a clearer error for copying a record that holds a `sync.Lock`.
+
+- **Fixed: `eiderc` crashed on a `break` or `continue` after a closure that holds a closure, inside a loop (#248).** `eiderc check` stopped with `runtime error: integer overflow in - (eiderc/check.ei)` instead of compiling. A closure body resets the loop count and loop frames but not the loop labels, and each closure exit trimmed the labels to the frames, so an inner closure removed the enclosing loop's label and the next `break` indexed an empty list. A labeled `break` inside a closure in a labeled loop indexed the loop frames with a label's position, the same defect hidden. The labels are now saved and reset with the frames. Test: `tests/run/loop_exit_nested_closure.ei`.
+- **`wrapping_add`, `wrapping_sub`, `wrapping_mul` and `wrapping_neg` (#220).** `import std.checked` adds them to `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64` and `usize`, next to the `checked_*` family: the methods for the `+%`, `-%` and `*%` operators (the result modulo 2^bits), for a generator or hash that overflows on purpose. Test: `tests/std/checked.ei`.
+- **Copying a record that holds a `sync.Lock` stays an error, and the error says what to do (#214; decision C918).** The help of E0601 for a record that holds a `Chan` (a `sync.Lock` is one) now says to build the record again from its parts, which shares the handle on purpose, and docs/site/reference/concurrency.md shows the builder. `.copy()` never shares, and a copy that forked a Lock would silently split state such as eider-http's `Metrics`. Test: `compiler/tests/check/fail/e0601_copy_lock_in_record.ei`.
+- #238 (`unwrap` and `expect` say what the error was), #211 (a Lock is poisoned by a contained trap) and #219 (disjoint fields of one record are borrowed together) were fixed in 0.7.7; their issues stayed open and are closed with this release.
+
 ## 0.7.9
 
 The fix for a crash of programs that start and end many tasks (a use-after-free of task stacks, present since 0.7.7 and made likely by 0.7.8, which is therefore a pre-release), and memory safety (#246): Eider states what a program without `unsafe` or `ffi` cannot do, checks it more, and requires the checks of every release.

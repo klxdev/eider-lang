@@ -1715,7 +1715,9 @@ two `()`s directly stays E0401 ("cannot compare values of type ()").
   part with its own `copy` is copied by it, and a record with its own Drop gets a buffer of its
   own. Task and Chan have no Copy, so `.copy()` on them or on anything holding them is E0601
   ("a running thread can't be cloned and a copied queue has no clear meaning; share the
-  handle instead"). Implicit copies (binding, passing, storing: value semantics) stay the
+  handle instead"; for a record that holds a Chan, such as one with a `sync.Lock`, the help
+  says to build the record again from its parts, which shares the handle on purpose, #214).
+  Implicit copies (binding, passing, storing: value semantics) stay the
   copy-on-write share and never run user code.
 - **Eq**: `==`, `!=`, `x.eq(y)` and `List.contains`. Derived structurally. **Map equality**:
   two Maps are equal when they have the same keys, each with an equal value; the slots' order

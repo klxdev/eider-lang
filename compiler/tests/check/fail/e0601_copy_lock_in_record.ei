@@ -1,0 +1,7 @@
+// expect: E0601 6:15
+import std.sync
+type Options = { metrics: sync.Lock[i32], port: i32 }
+fn main() {
+    let o = Options(sync.lock(0), 80)
+    let p = o.copy()
+}

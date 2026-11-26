@@ -252,6 +252,9 @@ Handles have no equality, order, hash or text: `==`, `<`, Map keys and `print` o
 anything holding them) are E0401 / E0701. `Task` and `Chan` have no `Copy`, so `.copy()` on
 them or on anything holding them is E0601; `Mutex[T]` has `Copy` when `T` does, and
 `m.copy()` is a new Mutex holding a copy of the value (locked while it is read).
+A `sync.Lock[T]` is a `Chan` inside, so a record that holds one (a shared `Metrics`, say)
+has no `.copy()` either. To change one field of such a record, build it again from its parts,
+which shares the handle on purpose: `fn with_port(self, p: i32) -> Options { Options(self.metrics, p) }`.
 
 ```eider,compile_fail=E0401
 fn main() uses io, threads {

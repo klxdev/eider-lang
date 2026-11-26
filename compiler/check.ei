@@ -3136,6 +3136,15 @@ fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] {
     m
 }
 
+/// `lack_help` for the type `ty` whose part `part` lacks `tr`: a record that holds a Chan (a
+/// `sync.Lock` is one) gets the way to change one of its fields without a copy (#214).
+fn lack_help_in(c: C, tr: u32, ty: u32, part: u32) -> str {
+    if tr == TR_COPY && part != NONE && part != ty && types.kind(c.t, ty) == types.T_RECORD && types.kind(c.t, part) == types.T_CHAN {
+        return "a copied queue has no clear meaning, and a copy that shared it would be a second owner of its state (a `sync.Lock` is a Chan inside); to change one field of a record that holds a Lock or Chan, build the record from its parts, as `Options(self.metrics, t)`, which shares the handle on purpose"
+    }
+    lack_help(c, tr, part)
+}
+
 /// The help for a type that lacks trait tr because of `part`.
 fn lack_help(c: C, tr: u32, part: u32) -> str {
     let k = types.kind(c.t, part)
@@ -3162,7 +3171,7 @@ fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u
     let mut seen: Map[u32, bool] = Map.new()
     let part = lacks(c, tr, ty, inout seen)
     if part == NONE { return err(code, line, col, lack_msg(c, what, tr, ty, part)) }
-    let h = lack_help(c, tr, part)
+    let h = lack_help_in(c, tr, ty, part)
     if s(h).len() == 0 { return err(code, line, col, lack_msg(c, what, tr, ty, part)) }
     errh(code, line, col, lack_msg(c, what, tr, ty, part), h)
 }
@@ -8933,7 +8942,7 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
         }
         let mut m = q3("type ", ts(c, ty), " doesn't implement trait `", trait_name(c, need), "` (required by ", what, ")")
         if part != ty && part != NONE { bytes.append(inout m, q(": its part ", ts(c, part), " doesn't")) }
-        let h = lack_help(c, need, part)
+        let h = lack_help_in(c, need, ty, part)
         let fd = if s(h).len() == 0 { err("E0601", n.line, n.col, m) } else { errh("E0601", n.line, n.col, m, h) }
         return fail_call(inout c, fd, n.c, n.d)
     }
