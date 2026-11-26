@@ -147,12 +147,13 @@ An absent member of an `Option[Box[T]]` is `None`; a required `Box[T]` member is
 for `T`. An error names the path through the boxes (`next.value: expected an integer, found a
 string`), and `@[check]` applies to what the box holds.
 
-The depth of a recursive value is the depth of its data. A document read from outside is
-bounded by the parser: `from_json` stops at depth 64 and `parse` at `MAX_DEPTH` (512). A value
-you build in memory is as deep as you made it, and writing it recurses once per level.
-Reading a deeply nested `serial.Value` with `from_value` keeps the path of every level it is
-inside (so its memory grows with the square of the depth: a chain of 20,000 nodes takes about
-1 GB), so read untrusted data through a parser and not by building a deep `Value` yourself.
+The depth of a recursive value is the depth of its data, so the readers limit it. A document
+read from outside is bounded by its parser: `from_json` stops at depth 64 and `parse` at
+`MAX_DEPTH` (512). `serial.from_value` refuses a `serial.Value` with lists or maps nested more than
+`serial.MAX_DEPTH` (512) levels deep, before it reads anything, and `serial.from_value_with(v,
+max_depth)` takes a limit of your own (a reader keeps the path of every level it is inside, so
+its memory grows with the square of the depth: a chain of 20,000 nodes would take about 1 GB).
+A value you build in memory is as deep as you made it, and writing it recurses once per level.
 
 ## Validation
 

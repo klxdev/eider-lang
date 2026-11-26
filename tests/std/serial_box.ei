@@ -123,7 +123,35 @@ fn main() uses io {
         }
     }
 
-    // a deep chain (2000 levels) round-trips
-    let deep = serial.from_value[Node](serial.to_value(chain(2000)).unwrap()).unwrap()
+    // the depth limit: 512 nested maps by default (serial.MAX_DEPTH), a limit of your own with from_value_with
+    print(serial.MAX_DEPTH)
+    let at = serial.to_value(chain(512)).unwrap()
+    print(length(serial.from_value[Node](at).unwrap()))
+    let over = serial.to_value(chain(513)).unwrap()
+    match serial.from_value[Node](over) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    print(length(serial.from_value_with[Node](over, 600).unwrap()))
+    match serial.from_value_with[Node](serial.to_value(chain(200)).unwrap(), 100) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    // a scalar is depth 0, a record of scalars 1
+    print(serial.from_value_with[i64](serial.VInt(4), 0).unwrap())
+    match serial.from_value_with[Node](only, 0) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    print(length(serial.from_value_with[Node](only, 1).unwrap()))
+    // a deep chain (2000 levels) round-trips with a limit that allows it
+    let deep = serial.from_value_with[Node](serial.to_value(chain(2000)).unwrap(), 5000).unwrap()
     print(length(deep))
+    // a list nested without end is refused too, and stops at the limit with a small stack
+    let mut nest = serial.VInt(1)
+    for _ in 0..100000 { nest = serial.VList(List[nest]) }
+    match serial.from_value[List[i64]](nest) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
 }

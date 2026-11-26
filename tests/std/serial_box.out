@@ -13,5 +13,14 @@ next.value: expected an integer, found a string
 abc
 tag: must have at least 2 characters
 n: must be at most 9
+512
+512
+nesting is deeper than 512 levels (`serial.from_value_with` sets the limit)
+513
+nesting is deeper than 100 levels (`serial.from_value_with` sets the limit)
+4
+nesting is deeper than 0 levels (`serial.from_value_with` sets the limit)
+1
 2000
+nesting is deeper than 512 levels (`serial.from_value_with` sets the limit)
 exit 0

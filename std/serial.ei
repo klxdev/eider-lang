@@ -549,8 +549,51 @@ pub fn to_value[T: Serialize](x: T) -> Result[Value, Error] {
     }
 }
 
-/// The value of type T in `v`.
+/// How many lists and maps `from_value` accepts inside one another: a `Value` nested deeper is
+/// an error. A reader keeps the path of every level it is inside, so the memory of reading
+/// a value grows with the square of its depth; a recursive type (`Option[Box[Node]]`) makes the
+/// depth unbounded by the type. It is the depth eider-json's `parse` accepts. A different limit:
+/// `from_value_with`.
+pub const MAX_DEPTH: u32 = 512
+
+/// True when `v` has lists or maps nested more than `left` levels deep. It stops at the limit, so
+/// it needs no more stack than the limit however deep `v` is.
+fn too_deep(v: Value, left: u32) -> bool {
+    match v {
+        VList(xs) => {
+            if left == 0 { return true }
+            for x in xs {
+                if too_deep(x, left - 1) { return true }
+            }
+            false
+        }
+        VMap(es) => {
+            if left == 0 { return true }
+            for e in es {
+                if too_deep(e.value, left - 1) { return true }
+            }
+            false
+        }
+        _ => false
+    }
+}
+
+/// The value of type T in `v`; an error when `v` has lists or maps nested more than `MAX_DEPTH`
+/// levels deep.
 pub fn from_value[T: Deserialize](v: Value) -> Result[T, Error] {
+    from_value_with(v, MAX_DEPTH)
+}
+
+/// `from_value` with a limit of your own: at most `max_depth` lists and maps inside one another
+/// (0 allows only a scalar; a record of records of scalars is 2). A value that is deeper is an
+/// error that says so, before anything is read.
+pub fn from_value_with[T: Deserialize](v: Value, max_depth: u32) -> Result[T, Error] {
+    if too_deep(v, max_depth) {
+        let mut m = "nesting is deeper than ".bytes()
+        bytes.append(inout m, bytes.from_u64(max_depth as u64))
+        bytes.append(inout m, " levels (`serial.from_value_with` sets the limit)".bytes())
+        return Err(error_at(List.new(), m))
+    }
     T.deserialize(ValueDeserializer(v, List.new()))
 }
 
