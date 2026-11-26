@@ -1334,6 +1334,11 @@ static void *dns_thread(void *p) {
   char b = 1;
   ssize_t w = write(j->wfd, &b, 1);
   (void)w;
+#ifdef EI_CORE_TEST_HOOKS
+  /* test hook (tests/core/os_test.c, "a lookup whose thread is slow to publish"): the thread is descheduled between the byte
+     and the state change, as on a busy machine */
+  { struct timespec d = {0, 30000000L}; nanosleep(&d, NULL); }
+#endif
   int running = 0;
   if (!atomic_compare_exchange_strong(&j->state, &running, 1)) dns_job_free(j); /* abandoned */
   return NULL;
@@ -1418,7 +1423,21 @@ EC_FN(int64_t, ec_dns_finish, (int64_t job)) {
   dns_job *j = dns_take(job);
   if (!j) return -EINVAL;
   for (int i = 0; i < 2000 && atomic_load(&j->state) == 0; i++) sched_yield();
-  if (atomic_load(&j->state) == 0) return -EAGAIN;
+  if (atomic_load(&j->state) == 0) {
+    /* The thread writes the byte to the pipe BEFORE it publishes the state ("signal first": after the state changes the caller
+       may free the job), so a caller woken by the byte can get here first. If the byte is there the thread has answered and
+       is only about to publish: wait for it (a descheduled thread on a busy machine takes milliseconds; giving up after 2000
+       yields returned -EAGAIN, "cannot resolve localhost: Resource temporarily unavailable"). With no byte the lookup is still
+       running: -EAGAIN at once, as the contract says. */
+    struct pollfd pf = {j->rfd, POLLIN, 0};
+    if (poll(&pf, 1, 0) == 1 && (pf.revents & POLLIN)) {
+      for (int i = 0; i < 20000 && atomic_load(&j->state) == 0; i++) {
+        struct timespec t = {0, 100000L}; /* 20000 x 100 us: 2 s at most */
+        nanosleep(&t, NULL);
+      }
+    }
+    if (atomic_load(&j->state) == 0) return -EAGAIN;
+  }
   dns_untable(job);
   out_len = 0;
   int64_t r = j->e != 0 ? eai_status(j->e) : dns_collect(j->res);

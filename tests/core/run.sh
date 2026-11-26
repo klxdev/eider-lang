@@ -120,6 +120,8 @@ core hardened -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-pro
 run portable -O0 -DEI_RT_PORTABLE
 run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
+# the DNS job's thread slow to publish its result: ec_dns_finish waits for it (hook compiled in only here)
+core dns-hook -O2 -DEI_CORE_TEST_HOOKS
 prof O2 -O2
 proftask O2 -O2
 proftask ucontext -O2 -DEI_TASK_UCONTEXT

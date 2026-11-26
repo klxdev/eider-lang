@@ -1039,6 +1039,9 @@ static void test_dns_deadline(void) {
   int64_t forged = (int64_t)((((uint64_t)ch >> 32) + 1) << 32 | ((uint64_t)ch & 0xffffffffu));
   EQI(ec_atomic_free(forged), -EINVAL);
   EQI(ec_atomic_free(ch), -EINVAL);
+  /* ec_dns_finish after the byte but before the state is published (built with -DEI_CORE_TEST_HOOKS the thread waits 30 ms
+     between the two): it waits for the thread, it does not return -EAGAIN (it did: "cannot resolve localhost: Resource
+     temporarily unavailable" on a busy machine) */
   EQI(ec_dns_finish(j), 1);
   CHECK(ec_out_byte(0) == 1 && ec_out_byte(1) == 7 && ec_out_byte(2) == 4 && ec_out_byte(5) == 127);
   EQI(ec_out_byte(3) * 256 + ec_out_byte(4), 8080);
