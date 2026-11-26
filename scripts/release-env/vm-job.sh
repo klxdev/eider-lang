@@ -14,9 +14,14 @@ mkdir -p /work && cp -a /w/. /work/ && chown -R tester:tester /work
 extra=
 if [ -n "$EIDER_PG_FORWARD" ]; then # PostgreSQL servers started on the host by pg-hatchd.sh: a `podman` that forwards to them
   mkdir -p /usr/local/libexec/podman-shim
-  cp /work/eider-lang/scripts/release-env/podman-forward /usr/local/libexec/podman-shim/podman
-  cp /work/eider-lang/scripts/release-env/tcp-forward.py /usr/local/libexec/podman-shim/
+  cp "$(dirname "$0")/podman-forward" /usr/local/libexec/podman-shim/podman
+  cp "$(dirname "$0")/tcp-forward.py" /usr/local/libexec/podman-shim/
   extra="PATH=/usr/local/libexec/podman-shim:$PATH"
+fi
+if [ -n "$VM_RELEASE" ]; then # the release key goes to RAM, owned by the job's user, and is removed at the end; zig is mounted at /zig
+  mkdir -p /dev/shm/rk && cp /k/release.key /dev/shm/rk/release.key && chown -R tester:tester /dev/shm/rk && chmod 700 /dev/shm/rk && chmod 600 /dev/shm/rk/release.key
+  trap 'rm -rf /dev/shm/rk' EXIT
+  extra="$extra EIDER_RELEASE_KEY=/dev/shm/rk/release.key ZIG=/zig/zig"
 fi
 cd /work/eider-lang || exit 1
 # build the crypto backend once, before any leg: the first use prints a "compiled in N s" line that fails tests comparing output
