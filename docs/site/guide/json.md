@@ -127,6 +127,33 @@ A record with a `flatten` field rejects unknown members too: the names the flatt
 takes count as the outer record's own. A derived enum rejects members of a variant that are
 neither its fields nor the tag.
 
+## Recursive types
+
+A record cannot contain itself by value (E0108), so a recursive type holds itself through a
+`Box`: `Option[Box[Node]]` for a list or a tree's parent, `List[Box[Tree]]` for its children. A
+`Box[T]` is written as its contents in every format and read as a `T` that is boxed, so these
+types derive like any other:
+
+```eider,ignore
+@[derive(Serialize, Deserialize)]
+type Node = { value: i64, next: Option[Box[Node]] }
+```
+
+```json
+{"value": 1, "next": {"value": 2, "next": null}}
+```
+
+An absent member of an `Option[Box[T]]` is `None`; a required `Box[T]` member is an error, as
+for `T`. An error names the path through the boxes (`next.value: expected an integer, found a
+string`), and `@[check]` applies to what the box holds.
+
+The depth of a recursive value is the depth of its data. A document read from outside is
+bounded by the parser: `from_json` stops at depth 64 and `parse` at `MAX_DEPTH` (512). A value
+you build in memory is as deep as you made it, and writing it recurses once per level.
+Reading a deeply nested `serial.Value` with `from_value` keeps the path of every level it is
+inside (so its memory grows with the square of the depth: a chain of 20,000 nodes takes about
+1 GB), so read untrusted data through a parser and not by building a deep `Value` yourself.
+
 ## Validation
 
 `@[check(...)]` states what a value must be, and a derived `Deserialize` enforces it while it
@@ -145,8 +172,8 @@ type Product = {
 
 | Key | Meaning |
 |---|---|
-| `min`, `max` | the range of a number (inclusive); through `Option`, and for each element of a `List` or `Map` |
-| `min_len`, `max_len` | the size of the field: characters of a `String`, items of a `List`, entries of a `Map` |
+| `min`, `max` | the range of a number (inclusive); through `Option` and `Box`, and for each element of a `List` or `Map` |
+| `min_len`, `max_len` | the size of the field: characters of a `String`, items of a `List`, entries of a `Map` (through `Option` and `Box` too) |
 | `format` | `email`, `uuid`, `uri`, `date`, `date-time`, `ipv4` or `hostname` (`std/validate`, no patterns) |
 | `one_of` | the allowed strings, comma separated |
 | `by = module` | `pub fn validate(v: T) -> Result[(), String]` in a module of yours, for a rule of your own |

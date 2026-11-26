@@ -432,6 +432,30 @@ impl[T: Deserialize] Deserialize for Option[T] {
     fn missing() -> Option[Option[T]] { Some(None) }
 }
 
+/// A Box is transparent in every format: it is written as its contents (`Option[Box[Node]]` is
+/// a node or null). It is how a record holds itself (`next: Option[Box[Node]]`, E0108 for a
+/// field of the type itself), so a recursive record derives `Serialize` and `Deserialize`.
+/// The recursion is as deep as the data: a parser's depth limit (eider-json's `limits()` has 64)
+/// bounds a document read from outside, and a value built in memory is as deep as its nesting.
+impl[T: Serialize] Serialize for Box[T] {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
+        self.get().serialize(inout s)
+    }
+}
+impl[T: Deserialize] Deserialize for Box[T] {
+    fn deserialize[D: Deserializer](d: D) -> Result[Box[T], Error] {
+        let v = T.deserialize(d)?
+        Ok(Box.new(v))
+    }
+    /// An absent member is as for the contents: the box of their `missing()`, or required.
+    fn missing() -> Option[Box[T]] {
+        match T.missing() {
+            Some(v) => Some(Box.new(v))
+            None => None
+        }
+    }
+}
+
 impl[T: Serialize] Serialize for Map[String, T] {
     fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
         // in key order, so equal Maps give equal documents
@@ -896,6 +920,11 @@ impl[T] Counted for Map[String, T] {
     fn noun(self) -> str { "entry" }
 }
 
+impl[T: Counted] Counted for Box[T] {
+    fn count(self) -> Option[usize] { self.get().count() }
+    fn noun(self) -> str { self.get().noun() }
+}
+
 impl[T: Counted] Counted for Option[T] {
     fn count(self) -> Option[usize] {
         match self {
@@ -1035,6 +1064,12 @@ impl[T: Checkable] Checkable for Option[T] {
             Some(x) => x.check_value(r, path, inout errs)
             None => {}
         }
+    }
+}
+
+impl[T: Checkable] Checkable for Box[T] {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        self.get().check_value(r, path, inout errs)
     }
 }
 

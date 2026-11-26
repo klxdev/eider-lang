@@ -1,0 +1,129 @@
+// std/serial: Serialize, Deserialize, Counted and Checkable for Box[T] (#249). A Box is
+// transparent in every format, so a recursive record (a field `Option[Box[Self]]`, since a
+// record cannot hold itself by value, E0108) derives and round-trips through the Value format.
+import std.bytes
+import std.serial
+
+@[derive(Serialize, Deserialize)]
+type Node = { value: i64, next: Option[Box[Node]] }
+
+@[derive(Serialize, Deserialize)]
+type Tree = { name: String, kids: List[Box[Tree]] }
+
+@[derive(Serialize, Deserialize)]
+type Holder = { must: Box[i64], opt: Option[Box[String]] }
+
+@[derive(Serialize, Deserialize)]
+type Tagged = {
+    @[check(min_len = 2, max_len = 4)] tag: Box[String],
+    @[check(min = 1, max = 9)] n: Box[i64],
+}
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn chain(n: i64) -> Node {
+    let mut cur = Node(n, None)
+    let mut i = n
+    while i > 1 {
+        i -= 1
+        cur = Node(i, Some(Box.new(cur)))
+    }
+    cur
+}
+
+fn length(n: Node) -> i64 {
+    match n.next {
+        Some(b) => 1 + length(b.get())
+        None => 1
+    }
+}
+
+fn names(t: Tree) -> List[u8] {
+    let mut s = t.name.bytes()
+    if t.kids.len() > 0 {
+        s.push(40)
+        for k in t.kids { bytes.append(inout s, names(k.get())) }
+        s.push(41)
+    }
+    s
+}
+
+fn leaf(n: str) -> Box[Tree] { Box.new(Tree(String.from(n), List.new())) }
+
+fn show(r: Result[serial.Value, serial.Error]) -> String {
+    match r {
+        Ok(v) => match v {
+            serial.VInt(n) => String.from_bytes(bytes.from_i64(n)).unwrap_or(String.from("?"))
+            serial.VNull => String.from("null")
+            serial.VStr(s) => text(s)
+            _ => String.from("other")
+        }
+        Err(e) => text(serial.error_text(e))
+    }
+}
+
+fn main() uses io {
+    // a Box is written as its contents
+    print(show(serial.to_value(Box.new(5 as i64))))
+    print(show(serial.to_value(Box.new(String.from("hi")))))
+    let none: Option[Box[i64]] = None
+    print(show(serial.to_value(none)))
+    let some: Option[Box[i64]] = Some(Box.new(7))
+    print(show(serial.to_value(some)))
+    let back = serial.from_value[Box[i64]](serial.VInt(9)).unwrap()
+    print(back.get())
+
+    // a linked list and a tree round-trip
+    let list = chain(5)
+    let lv = serial.to_value(list).unwrap()
+    let l2 = serial.from_value[Node](lv).unwrap()
+    print(length(l2))
+    print(l2.next.unwrap().get().next.unwrap().get().value)
+    let t = Tree(String.from("a"), List[leaf("b"), Box.new(Tree(String.from("c"), List[leaf("d"), leaf("e")]))])
+    let t2 = serial.from_value[Tree](serial.to_value(t).unwrap()).unwrap()
+    print(text(names(t2)))
+
+    // an absent member: an Option[Box] is None, a required Box is an error
+    let only = serial.VMap(List[serial.Entry(String.from("value").bytes(), serial.VInt(3))])
+    let n3 = serial.from_value[Node](only).unwrap()
+    print(length(n3))
+    match serial.from_value[Holder](serial.VMap(List[serial.Entry(String.from("opt").bytes(), serial.VStr("x".bytes()))])) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    let h = serial.from_value[Holder](serial.VMap(List[serial.Entry(String.from("must").bytes(), serial.VInt(1))])).unwrap()
+    print(h.opt.is_none())
+
+    // an error names the path through the boxes
+    let bad = serial.VMap(List[
+        serial.Entry(String.from("value").bytes(), serial.VInt(1)),
+        serial.Entry(String.from("next").bytes(), serial.VMap(List[
+            serial.Entry(String.from("value").bytes(), serial.VStr("x".bytes()))
+        ]))
+    ])
+    match serial.from_value[Node](bad) {
+        Ok(_) => print("accepted")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+
+    // @[check] sees through a Box
+    let ok = serial.VMap(List[
+        serial.Entry(String.from("tag").bytes(), serial.VStr("abc".bytes())),
+        serial.Entry(String.from("n").bytes(), serial.VInt(5))
+    ])
+    print(text(serial.from_value[Tagged](ok).unwrap().tag.get().bytes()))
+    let wrong = serial.VMap(List[
+        serial.Entry(String.from("tag").bytes(), serial.VStr("a".bytes())),
+        serial.Entry(String.from("n").bytes(), serial.VInt(10))
+    ])
+    match serial.from_value[Tagged](wrong) {
+        Ok(_) => print("accepted")
+        Err(e) => {
+            for m in serial.messages(e) { print(text(m)) }
+        }
+    }
+
+    // a deep chain (2000 levels) round-trips
+    let deep = serial.from_value[Node](serial.to_value(chain(2000)).unwrap()).unwrap()
+    print(length(deep))
+}

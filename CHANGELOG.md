@@ -5,6 +5,13 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.11
+
+Recursive records derive for every format (#249).
+
+- **`Serialize`, `Deserialize`, `Counted` and `Checkable` for `Box[T]` (#249; decision C919).** A `Box[T]` is written as its contents in every format and read as a `T` that is boxed, so `Option[Box[Node]]` is a node or null and a record that holds itself (`type Node = { value: i64, next: Option[Box[Node]] }`, the only way to write one, E0108) derives `Serialize` and `Deserialize` like any other, as do `List[Box[Tree]]` children. An absent member of an `Option[Box[T]]` is `None` and a required `Box[T]` is `missing field`, as for `T`; an error names the path through the boxes (`next.value: ...`); `@[check(...)]` (`min`, `max`, `min_len`, `max_len`, `format`, ...) applies to what the box holds. Test: `tests/std/serial_box.ei` (a linked list, a tree, transparency, absent members, error paths, checks, a 2,000-level chain). docs/site/guide/json.md has a "Recursive types" section.
+- **Depth.** A recursive type makes the depth of a value unbounded by its type, so the page says what bounds it: a parser's limit for a document read from outside (eider-json's `from_json` stops at depth 64, `parse` at `MAX_DEPTH` 512), and the data for a value built in memory. `serial.from_value` keeps the path of every level it is inside, so its memory grows with the square of the depth (20,000 levels take about 1 GB; construction and `to_value` are linear). It is the existing design for any deep `Value`, not new with `Box`. A depth counter in the `Serializer` and `Deserializer` traits would change what format implementors write, so it is left for 0.8 (decision C919).
+
 ## 0.7.10
 
 A checker crash fixed, wrapping arithmetic as methods, and a clearer error for copying a record that holds a `sync.Lock`.

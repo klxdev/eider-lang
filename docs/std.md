@@ -20,7 +20,7 @@ channels, tasks, the event loop) has its own page, docs/runtime.md.
 | **`sort`** | stable merge sort, `sort_by`, `sort_by_key`, `sort_in_place` (heapsort, not stable), `reverse_in_place`, binary search, bounds, dedup, min/max | none |
 | **`deque`**, **`set`**, **`heap`** | `Deque[T]`; `Set[T: Hash + Eq]`; `Heap[T: Ord]` (min or max) and a stable priority `Queue[T]` | none |
 | **`encoding`** | hex, base64 (standard and URL-safe, padded or not, strict decoding), little/big-endian integers | none |
-| **`serial`** | format-neutral serialization over a data model (bool, integers, floats, string, bytes, option, list, map, record, variant, time): the traits `Serialize`, `Deserialize` (for types) and `Serializer`, `Deserializer` (for formats), implementations for the built-in types, `Bytes`, and `Value`, the data model as a tree with `to_value` and `from_value`; errors name the path (`items[3].qty`) | none |
+| **`serial`** | format-neutral serialization over a data model (bool, integers, floats, string, bytes, option, list, map, record, variant, time): the traits `Serialize`, `Deserialize` (for types) and `Serializer`, `Deserializer` (for formats), implementations for the built-in types (including `Option[T]` and `Box[T]`, which is written as its contents, so a recursive record derives), `Bytes`, and `Value`, the data model as a tree with `to_value` and `from_value`; errors name the path (`items[3].qty`) | none |
 | **`testing`** | `assert_eq` with a diff, `Suite`, `diff_lines`, `table`, `bench`, `fuzz`, `temp_dir`; test doubles: `FakeClock`, scripted Reader and Writer, an in-memory pipe | `io` to print |
 
 The modules in bold are layer/std's first wave (decisions C23 to C29, C36 and C37). Their tests are in
