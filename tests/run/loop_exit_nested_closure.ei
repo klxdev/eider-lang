@@ -1,0 +1,34 @@
+// `break`/`continue` after a closure that holds another closure, inside a loop (#248),
+// and a labeled `break` inside a closure that sits in a labeled loop.
+fn run(f: fn() -> i32) -> i32 { f() }
+
+fn main() uses io {
+    let mut n = 0
+    while n < 4 {
+        n += run(|| -> i32 { run(|| -> i32 { 1 }) })
+        if n > 2 { break }
+    }
+    print(n)
+
+    let mut s = 0
+    for i in 0..10 {
+        s += run(|| -> i32 { run(|| -> i32 { 2 }) })
+        if i % 2 == 0 { continue }
+        if s > 8 { break }
+    }
+    print(s)
+
+    let mut t = 0
+    outer: for i in 0..3 {
+        t += run(|| -> i32 {
+            let mut k = 0
+            inner: while k < 5 {
+                k += 1
+                if k == 3 { break inner }
+            }
+            k
+        })
+        if i == 1 { break outer }
+    }
+    print(t)
+}

@@ -3552,7 +3552,7 @@ fn dyn_thunk(inout c: C, ty: u32, inst: Inst, self_inout: bool, line: u32) -> u3
     bytes.append(inout fname, s(".closure"))
     bytes.append(inout fname, num(c.closures as u64))
     let f = ir.declare_fn(inout c.ir, fname, false)
-    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.loop_labels, c.lam_expr)
     let ctext = caps_text(c, c.caps)
     ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
     c.scopes = List.new()
@@ -3599,7 +3599,7 @@ fn dyn_thunk(inout c: C, ty: u32, inst: Inst, self_inout: bool, line: u32) -> u3
     c.ret = saved.ret
     c.loops = saved.loops
     c.loop_bases = saved.loop_bases
-    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.loop_labels = saved.loop_labels
     c.lam_expr = saved.lam_expr
     f
 }
@@ -3612,7 +3612,7 @@ fn dyn_holder(inout c: C, ty: u32, line: u32) -> u32 {
     bytes.append(inout fname, s(".closure"))
     bytes.append(inout fname, num(c.closures as u64))
     let f = ir.declare_fn(inout c.ir, fname, false)
-    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.loop_labels, c.lam_expr)
     let ctext = caps_text(c, c.caps)
     ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
     c.scopes = List.new()
@@ -3634,7 +3634,7 @@ fn dyn_holder(inout c: C, ty: u32, line: u32) -> u32 {
     c.ret = saved.ret
     c.loops = saved.loops
     c.loop_bases = saved.loop_bases
-    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.loop_labels = saved.loop_labels
     c.lam_expr = saved.lam_expr
     f
 }
@@ -5055,6 +5055,7 @@ fn reset_frames(inout c: C) {
     c.firs = List.new()
     c.fresh = Map.new()
     c.loop_bases = List.new()
+    c.loop_labels = List.new()
     push_frame(inout c)
 }
 
@@ -9476,7 +9477,7 @@ type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32, alias: u32, 
 /// The state of the enclosing function while a closure body is checked.
 type Saved = {
     scopes: List[Local], marks: List[u32], frames: List[Owned], fmarks: List[u32], firs: List[u32],
-    fresh: Map[u32, bool], ret: u32, loops: u32, loop_bases: List[u32], lam_expr: bool,
+    fresh: Map[u32, bool], ret: u32, loops: u32, loop_bases: List[u32], loop_labels: List[u32], lam_expr: bool,
 }
 
 /// `|params| body`: the body becomes an IR function of its own whose
@@ -9559,7 +9560,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     bytes.append(inout fname, s(".closure"))
     bytes.append(inout fname, num(c.closures as u64))
     let f = ir.declare_fn(inout c.ir, fname, false)
-    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.loop_labels, c.lam_expr)
     let ctext = caps_text(c, c.caps)
     ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
     c.scopes = List.new()
@@ -9593,7 +9594,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     c.ret = saved.ret
     c.loops = saved.loops
     c.loop_bases = saved.loop_bases
-    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.loop_labels = saved.loop_labels
     c.lam_expr = saved.lam_expr
     match r {
         Ok(_) => {}
