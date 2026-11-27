@@ -169,7 +169,7 @@ eider = "0.8"
 # the HTTP server and router; granted what the server uses (the compiler checks it, E0204)
 [deps.http]
 git = "https://github.com/klxdev/eider-http.git"
-version = "0.7.0"
+version = "0.8.0"
 uses = ["clock", "fs", "io", "net", "threads"]' "$(cat "$T/svc/eider.toml")"
 check "service has a router and a test" "1 1" "$(grep -c 'router.new()' "$T/svc/main.ei") $(grep -c '^test "hello"' "$T/svc/main.ei")"
 check "an unknown template" "eider-pkg: unknown template \`nope\`; the templates are cli, lib, service, wasm
