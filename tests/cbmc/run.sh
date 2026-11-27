@@ -26,7 +26,7 @@ check_alone() { # name file [extra flags]
     echo "FAIL cbmc $name"; echo "$out" | grep -E "FAILURE|failed|ERROR|too many" | head -8; fail=1
   fi
 }
-check_alone timer_heap timer_heap
+check_alone timer_heap timer_heap --unwind 5
 for h in grow_cap buf_alloc list_open_close str_slice; do check $h $h; done
 for n in 0 1 2; do for k in 0 1 2; do check "str_cat n=$n k=$k" str_cat -DN=$n -DK=$k; done; done
 exit $fail

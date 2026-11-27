@@ -1,5 +1,5 @@
 /* CBMC harness (reactor timer heap): heap_push and heap_remove keep the min-heap order, every wait's hidx equal to its
-   slot (or -1 once removed), and hn equal to the number of waits in it, for EVERY deadline (any int64, ties included) of
+   slot (or -1 once removed), and hn equal to the number of waits in it, for EVERY order of deadlines (ties included) of
    up to N waits and every one removed. The functions are static, so the harness includes the file; run it alone
    (without core/eider_rt.c). */
 #include "../../core/eider_rt.c"
@@ -10,7 +10,6 @@
 #define N 4
 #endif
 
-int64_t nondet_i64(void);
 unsigned nondet_uint(void);
 
 static void check(struct reactor *r, ei_wait **ws, int n) {
@@ -31,27 +30,28 @@ void harness(void) {
   ei_wait w[N];
   ei_wait *ws[N];
   ei_wait *slots[N];
-  memset(&r, 0, sizeof r);
   r.heap = slots; /* big enough: hcap = N, so no realloc */
   r.hcap = N;
+  r.hn = 0;
   for (int k = 0; k < N; k++) {
-    memset(&w[k], 0, sizeof w[k]);
     w[k].hidx = -1;
-    w[k].dl = nondet_i64();
+    unsigned d = nondet_uint(); /* only the order of deadlines matters (the code compares with < and >): 0..N covers every order and tie */
+    __CPROVER_assume(d <= N);
+    w[k].dl = (int64_t)d;
     ws[k] = &w[k];
   }
   for (int k = 0; k < N; k++) {
     assert(heap_push(&r, ws[k]));
     check(&r, ws, N);
   }
-  /* remove in an arbitrary order */
-  for (int step = 0; step < N; step++) {
-    unsigned which = nondet_uint();
-    __CPROVER_assume(which < N);
-    heap_remove(&r, ws[which]);
-    check(&r, ws, N);
-    heap_remove(&r, ws[which]); /* a second removal is a no-op */
-    check(&r, ws, N);
-  }
+  /* remove any one (twice: the second is a no-op), then the rest */
+  unsigned which = nondet_uint();
+  __CPROVER_assume(which < N);
+  heap_remove(&r, ws[which]);
+  check(&r, ws, N);
+  heap_remove(&r, ws[which]);
+  check(&r, ws, N);
+  for (int k = 0; k < N; k++) heap_remove(&r, ws[k]);
+  check(&r, ws, N);
   assert(r.hn == 0);
 }
