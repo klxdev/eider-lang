@@ -45,6 +45,7 @@ fn main() uses io {
     print(fmt.grouped(-1234567, ","))
     print(fmt.grouped(123, ","))
     print(fmt.grouped(1000, "_"))
+    print(fmt.grouped(1000, String.from(" ")))
     print(fmt.grouped(0, ","))
 
     let mut out = String.from("x=")

@@ -16,14 +16,15 @@
 //!   at most 253 bytes.
 
 import std.bytes
+import std.strings
 import std.time
 
 /// The formats `valid` knows, for messages.
 pub fn names() -> str { "email, uuid, uri, date, date-time, ipv4, hostname" }
 
 /// Whether `name` is a format `valid` knows.
-pub fn known(name: str) -> bool {
-    let n = name.bytes()
+pub fn known[N: strings.Text](name: N) -> bool {
+    let n = name.text().bytes()
     for f in ["email", "uuid", "uri", "date", "date-time", "ipv4", "hostname"] {
         if bytes.eq(n, f.bytes()) { return true }
     }
@@ -31,8 +32,8 @@ pub fn known(name: str) -> bool {
 }
 
 /// Whether `v` is valid in the format `name` (an unknown format is not: check `known`).
-pub fn valid(name: str, v: List[u8]) -> bool {
-    let n = name.bytes()
+pub fn valid[N: strings.Text](name: N, v: List[u8]) -> bool {
+    let n = name.text().bytes()
     if bytes.eq(n, "email".bytes()) { return email(v) }
     if bytes.eq(n, "uuid".bytes()) { return uuid(v) }
     if bytes.eq(n, "uri".bytes()) { return uri(v) }

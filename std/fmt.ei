@@ -8,6 +8,8 @@
 //!
 //! Floats wait for the language's f64 (decision C9).
 
+import std.strings
+
 /// Where text goes inside a wider field.
 pub type Align = | Left | Right | Center
 
@@ -187,12 +189,13 @@ pub fn pad_left(s: String, width: usize) -> String { pad(s, spec().width(width))
 pub fn pad_right(s: String, width: usize) -> String { pad(s, spec().width(width).left()) }
 
 /// Decimal digits in groups of three: `grouped(-1234567, ",")` is "-1,234,567".
-pub fn grouped(n: i64, sep: str) -> String {
+pub fn grouped[S: strings.Text](n: i64, sep: S) -> String {
     let ds = digits(magnitude(n), 10, false)
+    let sep = sep.text()
     let mut out = String.from("")
     if n < 0 { out.push_str("-") }
     for i in 0..ds.len() {
-        if i > 0 && (ds.len() - i) % 3 == 0 { out.push_str(sep) }
+        if i > 0 && (ds.len() - i) % 3 == 0 { out.append(sep.copy()) }
         out.push_byte(ds.byte(i))
     }
     out

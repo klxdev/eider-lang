@@ -27,6 +27,10 @@ fn shown_int(r: Result[i64, String]) uses io {
 }
 
 fn main() uses io {
+    // keys and values may be a String as well as a str (#218)
+    let owned = config.new().default(String.from("n"), String.from("7"))
+    shown_int(owned.int(String.from("n")))
+    print(owned.has(String.from("n")))
     let base = config.new().default("addr", ":8080").default("workers", "4").default("verbose", "false").default("grace", "10s").default("http.port", "80")
     show(base.str("addr"))
     shown_int(base.int("workers"))
