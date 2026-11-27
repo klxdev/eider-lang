@@ -67,7 +67,8 @@ same sanitizers; a mutation fuzzer for the compiler (`packages/fuzz`).
 
 Also checked now (#246): the programs the checker accepts are built and run under ASan+UBSan with the C-core invariant
 checks (`SAN=1 scripts/fuzz-check.sh`; 60,000 mutants, 4,468 programs run, no report, 2026-11-23); the compile-time
-interpreter is compared with the compiled code on 100,000 generated total integer functions (`tests/safety/diff`, no
+interpreter is compared with the compiled code on 100,000 generated total integer functions and on generated programs over
+lists, strings, maps, records, closures (snapshot captures, nesting, function values) and trait dispatch (`tests/safety/diff`, no
 difference); an overrun by C of an `inout List[u8]` is caught (S12); the process code of the C core was audited
 (`c-core-audit.md`, two bugs fixed).
 
@@ -75,8 +76,8 @@ difference); an overrun by C of an `inout List[u8]` is caught (S12); the process
 (`Task`, `Mutex`, `Chan`) are atomic; buffer counts are not, every crossing point applies a generated `own_` glue that makes the
 value deeply unique, and `proofs/Eider/Stage5.lean` proves that this is sound *if the list is complete*; the crossing points are
 tested under TSan, but a point nobody thought of would not be); a proof that `eiderc`'s checker and runtime implement the
-calculus (the proofs are about the rules as stated); a differential check wider than integers, lists, strings, maps and records
-(closures, traits, threads); CBMC for the rest of the C core (the buffer and string functions and the reactor's timer heap are done; the rest of the reactor, the parkers
+calculus (the proofs are about the rules as stated); a differential check wider than integers, lists, strings, maps, records, closures and traits
+(threads); CBMC for the rest of the C core (the buffer and string functions and the reactor's timer heap are done; the rest of the reactor, the parkers
 and the process code are not); a detector for an FFI overrun beyond the canary, for reads, or for buffers C keeps.
 
 Required of every release (`docs/site/tooling/releases.md`): the rule corpus, sanitizer fuzzing of accepted programs, the Lean

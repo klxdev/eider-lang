@@ -218,7 +218,9 @@ Option[u32]` ..., for 16 (in a u32), 32 and 64 bits, unsigned and signed, both b
 
 A `str` cannot be made from a `String` (it would be a pointer that could outlive its owner), so a function that only
 reads its text takes `T: strings.Text` and accepts either: `stream.error`, `os_error`, `timed_out`, `write_str`,
-`reader_str`; `serial.error`, `fail`, `expected`, `member`; `testing.suite`, `table`, `bench`, `fuzz`, `temp_dir`. Text built
+`reader_str`; `serial.error`, `fail`, `expected`, `member`; `testing.suite`, `table`, `bench`, `fuzz`, `temp_dir`; `fmt.grouped`;
+`validate.known` and `validate.valid`; the `config.Config` methods `default`, `env`, `has`, `source`, `str`, `int`, `bool` and
+`duration_ms`. `std/error` cannot (it is imported by `std/strings`), so `Failure.new` and `context` keep their `str`. Text built
 at run time (an interpolated literal, a field) can be passed as it is. Every call that passed a `str` still compiles
 (tests/std/text_generic.ei). A library that has its own `str` parameter does the same.
 

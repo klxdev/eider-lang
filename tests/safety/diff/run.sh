@@ -9,8 +9,8 @@ K=${3:-60}
 S0=${4:-1}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 bad=0
-# gen: integer functions; gen2: List, String, Map and record values with copies and aliases
-for g in gen gen2; do
+# gen: integer functions; gen2: List, String, Map and record values with copies and aliases; gen3: closures (snapshot captures, nesting, function values) and trait dispatch
+for g in gen gen2 gen3; do
   $E build tests/safety/diff/$g.ei -o "$T/$g" >"$T/log" 2>&1 || { echo "FAIL safety diff: cannot build $g.ei"; head -5 "$T/log"; exit 1; }
   i=0
   while [ $i -lt "$N" ]; do
