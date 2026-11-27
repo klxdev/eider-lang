@@ -91,6 +91,9 @@ for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   if d=$(repo_dir "eider-$n" "$var"); then eval "$var=\$d"; export "$var"; else unset "$var"; fi
 done
+# eider-proto is not tested here (nothing of the toolchain uses it), but eider-rpc depends on it: its checkout,
+# when there is one, is what the copy of eider-rpc builds against (else its tag is fetched)
+if d=$(repo_dir "eider-proto" "EIDER_PROTO"); then EIDER_PROTO=$d; export EIDER_PROTO; fi
 # fetched: vendor_ok <name>: .vendor/<name> is the pinned release (else $novendor says why)
 vendor_ok() {
   sh "$here/scripts/vendor.sh" fetch "$1" > "$T/vendor-$1" 2>&1 && return 0
