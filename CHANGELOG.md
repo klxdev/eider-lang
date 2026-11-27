@@ -5,6 +5,16 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.8.0
+
+The first step of the memory-safety plan for 0.8 (#246): more of the C core and the compile-time interpreter checked by machine, and std functions that only read text taking a `String` too. **A minor release: every library and tool moves to the 0.8 series, and a package that says `eider = "0.7"` is refused (E0811).**
+
+- **std functions that only read text accept a `str` or a `String` (#218; decision of 0.7.7).** `config.Config`'s `default`, `env`, `has`, `source`, `str`, `int`, `bool` and `duration_ms`, `fmt.grouped`, and `validate.known` and `validate.valid` take `T: strings.Text`. Every call that passed a `str` still compiles. `Failure.new` and `context` (std/error) keep their `str`: `std/strings` imports `std/error`. Tests: `tests/std/config.ei`, `tests/std/fmt.ei`.
+- **Soundness evidence: the reactor's timer heap is model-checked (#190).** `tests/cbmc/timer_heap.c` runs `heap_push` and `heap_remove` of `core/eider_rt.c` under CBMC for every order of deadlines (ties included) of up to 4 waits: min-heap order, each wait's `hidx` its slot (or -1 once removed), `hn` the live count, `next_dl` the earliest. A heap without the sift-down in `heap_remove` fails it. The release gate's `cbmc` leg runs it.
+- **Soundness evidence: the compile-time interpreter is compared with compiled code on closures and traits (#191).** `tests/safety/diff/gen3.ei` writes programs with closures that capture a scalar, a List, a String or a record (a later write to the original must not show: capture is a snapshot), nested closures, closures passed to a higher-order function, stored in a list or returned from a function, and generic calls bounded by a trait with a default method that one implementor overrides. The interpreter and the compiled code agreed on every program (40 programs of 60 functions). Threads are not covered.
+- **Issues that were fixed earlier and are closed with this release:** #183 (a scalar `let` copies; a write under a live reference is E0308) and #198 (scalar place arguments are two-phase), both in 0.7.7; #234 (the `{{` escape, 0.7.7).
+- **Not in this release (0.9 or later):** the external audit (#188, #195), the proof that the checker implements the model, CBMC of the parkers and the process code, and the FFI work (#192, #193, #194). Renaming `std/serial` (#207) stays parked.
+
 ## 0.7.11
 
 Recursive records derive for every format (#249).

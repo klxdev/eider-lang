@@ -47,7 +47,7 @@ cat > "$T/repos/hashlib/eider.toml" <<'EOF'
 [package]
 name = "hashlib"
 version = "0.1.0"
-eider = "0.7"
+eider = "0.8"
 
 [deps.crypto]
 toolchain = true
@@ -79,7 +79,7 @@ cat > "$T/app/eider.toml" <<EOF
 [package]
 name = "app"
 version = "0.1.0"
-eider = "0.7"
+eider = "0.8"
 
 [deps.hashlib]
 git = "file://$T/repos/hashlib"
@@ -108,7 +108,7 @@ cat > "$T/direct/eider.toml" <<'EOF'
 [package]
 name = "direct"
 version = "0.1.0"
-eider = "0.7"
+eider = "0.8"
 EOF
 out=$(pkg direct add crypto --toolchain)
 contains "add --toolchain declares crypto and grants what it uses" "$out" "added crypto"

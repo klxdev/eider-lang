@@ -33,7 +33,7 @@ A service declares the libraries in its `eider.toml` and grants each what it use
 [package]
 name = "notes"
 version = "0.1.0"
-eider = "0.7"
+eider = "0.8"
 main = "main.ei"
 
 [deps.http]

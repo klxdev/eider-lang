@@ -7,7 +7,7 @@
 # A minor bump must move, with no hand edit: VERSION and its copies, `eider` in every manifest,
 # a library's own `version` line (also where it has no scripts/version.sh, and a second package
 # of it), the `[deps.*]` pins on other siblings (git before or after version), the series text of
-# docs, tests and goldens (including a quoted `eider = \"0.7\"`), the `eiderc doc` goldens'
+# docs, tests and goldens (including a quoted `eider = \"0.8\"`), the `eiderc doc` goldens'
 # toolchain version, the releases page's version output block and `eider add --version` lines;
 # leave history (CHANGELOG, decisions) and a package's own version alone; print the tag commands
 # of the libraries and the example, vendor.sh and the re-lock directories; and FAIL (exit 1)

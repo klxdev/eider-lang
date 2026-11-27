@@ -131,7 +131,7 @@ check "init writes eider.toml" '[package]
 name = "app"
 version = "0.1.0"
 main = "main.ei"
-eider = "0.7"' "$(cat "$T/app/eider.toml")"
+eider = "0.8"' "$(cat "$T/app/eider.toml")"
 check "init writes a program with package imports" 'import core.sys
 import std.io' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
@@ -143,7 +143,7 @@ check "lib manifest has an entry and no main" '[package]
 name = "mylib"
 version = "0.1.0"
 entry = "mylib.ei"
-eider = "0.7"' "$(cat "$T/mylib/eider.toml")"
+eider = "0.8"' "$(cat "$T/mylib/eider.toml")"
 check "lib tests pass" "test add ... ok
 
 1 tests, 0 failed
@@ -164,7 +164,7 @@ check "service manifest depends on eider-http at the toolchain's series" '[packa
 name = "svc"
 version = "0.1.0"
 main = "main.ei"
-eider = "0.7"
+eider = "0.8"
 
 # the HTTP server and router; granted what the server uses (the compiler checks it, E0204)
 [deps.http]
@@ -218,7 +218,7 @@ check "eider.toml after add" "[package]
 name = \"app\"
 version = \"0.1.0\"
 main = \"main.ei\"
-eider = \"0.7\"
+eider = \"0.8\"
 
 [deps.geom]
 path = \"../geom\"
